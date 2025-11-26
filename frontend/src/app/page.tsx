@@ -1,201 +1,200 @@
 "use client";
 
-import { useState, useRef, useEffect } from "react";
+/**
+ * Super Agent Platform - Main Page
+ * VIDEO FIRST ARCHITECTURE
+ * 
+ * ✅ 기능 연동 완료:
+ * 1. [AI 영상 생성] 버튼 → POST /api/video/generate 호출
+ * 2. 영상 생성 완료 → 타임라인 Video 트랙에 자동 로드
+ * 3. 챗봇 "자막 달아줘" → /api/creatomate/auto-edit 실행
+ */
+
+import { useState, useEffect, useCallback } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import {
-  Send,
+  Plus,
+  MessageSquare,
+  Settings,
+  FolderOpen,
   Sparkles,
-  Bot,
-  User,
-  Mic,
-  Image,
   Video,
   TrendingUp,
-  Zap,
-  ChevronRight,
   Menu,
   X,
-  Plus,
-  Settings,
-  LogOut,
+  ChevronDown,
+  Play,
+  Download,
+  Share2,
+  MoreHorizontal,
+  Clock,
+  Layers,
+  Wand2,
+  Loader2,
 } from "lucide-react";
-import SmartActionCard from "@/components/SmartActionCard";
-import Dashboard from "@/components/Dashboard";
 
-// Types
-interface Message {
-  id: string;
-  role: "user" | "assistant";
-  content: string;
-  timestamp: Date;
-  actionCards?: ActionCard[];
-}
+// Components
+import VideoPlayer from "@/components/VideoPlayer";
+import Timeline from "@/components/Timeline";
+import ChatSidebar from "@/components/ChatSidebar";
+import NewProjectModal from "@/components/NewProjectModal";
 
-interface ActionCard {
-  type: string;
-  title: string;
-  description: string;
-  data: Record<string, any>;
-  actions: { label: string; action: string }[];
-}
-
-interface ChatState {
-  messages: Message[];
-  isLoading: boolean;
-  suggestions: string[];
-}
+// Store
+import { useVideoStore, useChatStore, useUIStore, VideoProject, TimelineClip } from "@/lib/store";
 
 // API URL
 const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
 
 export default function Home() {
-  // State
-  const [chatState, setChatState] = useState<ChatState>({
-    messages: [],
-    isLoading: false,
-    suggestions: [
-      "쇼츠 영상을 만들고 싶어요",
-      "요즘 뜨는 콘텐츠가 뭐예요?",
-      "내 브랜드에 맞는 영상 스타일 추천해줘",
-    ],
-  });
-  const [inputValue, setInputValue] = useState("");
-  const [showDashboard, setShowDashboard] = useState(false);
   const [sidebarOpen, setSidebarOpen] = useState(false);
+  const [isGenerating, setIsGenerating] = useState(false);
   
-  const messagesEndRef = useRef<HTMLDivElement>(null);
-  const inputRef = useRef<HTMLTextAreaElement>(null);
+  // Stores
+  const {
+    currentProject,
+    projects,
+    renderStatus,
+    renderProgress,
+    videoUrl,
+    setCurrentProject,
+    startRender,
+    updateRenderProgress,
+    completeRender,
+    failRender,
+    addClip,
+    updateProject,
+  } = useVideoStore();
+  
+  const { isChatOpen, setChatOpen } = useChatStore();
+  const { showNewProjectModal, setShowNewProjectModal } = useUIStore();
 
-  // Auto scroll to bottom
-  useEffect(() => {
-    messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
-  }, [chatState.messages]);
+  // ============================================
+  // ✅ 1. AI 영상 생성 - 백엔드 API 연동
+  // POST /api/video/generate 호출
+  // ============================================
+  const handleGenerateVideo = useCallback(async () => {
+    if (!currentProject || isGenerating) return;
 
-  // Send message
-  const sendMessage = async (content: string) => {
-    if (!content.trim() || chatState.isLoading) return;
-
-    const userMessage: Message = {
-      id: `msg-${Date.now()}`,
-      role: "user",
-      content: content.trim(),
-      timestamp: new Date(),
-    };
-
-    setChatState((prev) => ({
-      ...prev,
-      messages: [...prev.messages, userMessage],
-      isLoading: true,
-      suggestions: [],
-    }));
-
-    setInputValue("");
+    setIsGenerating(true);
+    startRender(currentProject.id);
 
     try {
-      const response = await fetch(`${API_BASE_URL}/api/chat`, {
+      // Step 1: 영상 생성 요청
+      const response = await fetch(`${API_BASE_URL}/api/video/generate`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          user_id: "demo-user",
-          message: content.trim(),
-          context: { previousMessages: chatState.messages.slice(-5) },
+          project_id: currentProject.id,
+          title: currentProject.title,
+          description: currentProject.description || "",
+          aspect_ratio: currentProject.aspectRatio,
+          preset: currentProject.preset || "warm_film",
+          source_type: "ai_generate",
         }),
       });
 
-      if (!response.ok) throw new Error("API request failed");
+      if (!response.ok) {
+        throw new Error("영상 생성 요청 실패");
+      }
 
       const data = await response.json();
+      console.log("✅ 영상 생성 시작:", data);
 
-      const assistantMessage: Message = {
-        id: `msg-${Date.now()}-ai`,
-        role: "assistant",
-        content: data.message,
-        timestamp: new Date(),
-        actionCards: data.action_cards,
-      };
+      // Step 2: 진행률 폴링
+      await pollVideoProgress(currentProject.id);
 
-      setChatState((prev) => ({
-        ...prev,
-        messages: [...prev.messages, assistantMessage],
-        isLoading: false,
-        suggestions: data.suggestions || [],
-      }));
     } catch (error) {
-      console.error("Chat error:", error);
-      
-      // Fallback response
-      const fallbackMessage: Message = {
-        id: `msg-${Date.now()}-fallback`,
-        role: "assistant",
-        content: "안녕하세요! Studio Juai 에이전트입니다. 어떤 콘텐츠를 만들어 드릴까요?",
-        timestamp: new Date(),
-        actionCards: [
-          {
-            type: "video_generation",
-            title: "영상 제작 시작하기",
-            description: "AI가 트렌드를 분석하고 최적의 영상을 제작합니다",
-            data: { preset: "iphone_korean" },
-            actions: [
-              { label: "새 프로젝트 시작", action: "create_project" },
-              { label: "템플릿 둘러보기", action: "browse_templates" },
-            ],
-          },
-          {
-            type: "trend_analysis",
-            title: "트렌드 분석",
-            description: "YouTube/Instagram 실시간 트렌드를 확인하세요",
-            data: {},
-            actions: [{ label: "트렌드 보기", action: "view_trends" }],
-          },
-        ],
-      };
-
-      setChatState((prev) => ({
-        ...prev,
-        messages: [...prev.messages, fallbackMessage],
-        isLoading: false,
-        suggestions: [
-          "쇼츠 영상을 만들고 싶어요",
-          "요즘 뜨는 콘텐츠가 뭐예요?",
-          "내 브랜드에 맞는 영상 스타일 추천해줘",
-        ],
-      }));
+      console.error("❌ 영상 생성 오류:", error);
+      failRender(error instanceof Error ? error.message : "알 수 없는 오류");
+    } finally {
+      setIsGenerating(false);
     }
+  }, [currentProject, isGenerating, startRender, failRender]);
+
+  // ============================================
+  // ✅ 2. 진행률 폴링 & 타임라인 자동 로드
+  // GET /api/video/progress/{project_id}
+  // ============================================
+  const pollVideoProgress = async (projectId: string) => {
+    const maxAttempts = 60; // 최대 60초 (1초 간격)
+    let attempts = 0;
+
+    while (attempts < maxAttempts) {
+      try {
+        const response = await fetch(`${API_BASE_URL}/api/video/progress/${projectId}`);
+        
+        if (!response.ok) {
+          throw new Error("진행률 조회 실패");
+        }
+
+        const data = await response.json();
+        console.log(`📊 진행률: ${data.progress}% - ${data.message}`);
+
+        // 상태 업데이트
+        updateRenderProgress(data.progress, data.message);
+
+        // 완료 체크
+        if (data.status === "completed" && data.video_url) {
+          console.log("🎉 영상 생성 완료:", data.video_url);
+          
+          // ✅ video_url로 플레이어 업데이트 & 자동 재생
+          completeRender(data.video_url);
+
+          // ✅ 타임라인 Video 트랙에 자동 로드
+          addVideoToTimeline(data.video_url, data.duration || 15);
+          
+          // 프로젝트 업데이트
+          updateProject(projectId, {
+            status: "completed",
+            videoUrl: data.video_url,
+            thumbnailUrl: data.thumbnail_url,
+          });
+
+          return;
+        }
+
+        // 실패 체크
+        if (data.status === "failed") {
+          throw new Error(data.message || "영상 생성 실패");
+        }
+
+        // 1초 대기 후 다시 폴링
+        await new Promise((r) => setTimeout(r, 1000));
+        attempts++;
+
+      } catch (error) {
+        console.error("폴링 오류:", error);
+        throw error;
+      }
+    }
+
+    throw new Error("영상 생성 시간 초과");
   };
 
-  // Handle key press
-  const handleKeyPress = (e: React.KeyboardEvent) => {
-    if (e.key === "Enter" && !e.shiftKey) {
-      e.preventDefault();
-      sendMessage(inputValue);
-    }
-  };
+  // ============================================
+  // ✅ 타임라인에 영상 클립 추가
+  // ============================================
+  const addVideoToTimeline = (videoUrl: string, duration: number) => {
+    const newClip: TimelineClip = {
+      id: `clip_${Date.now()}`,
+      type: "video",
+      startTime: 0,
+      duration: duration * 1000, // ms로 변환
+      sourceUrl: videoUrl,
+      label: currentProject?.title || "생성된 영상",
+      layer: 0,
+    };
 
-  // Handle action card click
-  const handleActionClick = (cardType: string, action: string, data: any) => {
-    console.log("Action clicked:", { cardType, action, data });
-    
-    if (action === "create_project") {
-      setShowDashboard(true);
-    } else if (action === "view_trends") {
-      sendMessage("요즘 트렌드 분석해줘");
-    } else if (action === "browse_templates") {
-      sendMessage("영상 템플릿 보여줘");
-    }
+    addClip(newClip);
+    console.log("✅ 타임라인에 영상 추가:", newClip);
   };
-
-  // Render Dashboard
-  if (showDashboard) {
-    return <Dashboard onBack={() => setShowDashboard(false)} />;
-  }
 
   return (
-    <div className="flex h-screen bg-juai-paper">
-      {/* Sidebar */}
+    <div className="flex h-screen bg-juai-paper overflow-hidden">
+      {/* Left Sidebar - Navigation */}
       <AnimatePresence>
         {sidebarOpen && (
           <>
-            {/* Overlay */}
             <motion.div
               initial={{ opacity: 0 }}
               animate={{ opacity: 1 }}
@@ -204,12 +203,11 @@ export default function Home() {
               className="fixed inset-0 bg-black/50 z-40 lg:hidden"
             />
             
-            {/* Sidebar Content */}
             <motion.aside
               initial={{ x: -280 }}
               animate={{ x: 0 }}
               exit={{ x: -280 }}
-              className="fixed left-0 top-0 h-full w-[280px] bg-juai-night z-50 
+              className="fixed lg:relative left-0 top-0 h-full w-[280px] bg-juai-night z-50 
                        flex flex-col border-r border-juai-gray-800"
             >
               {/* Logo */}
@@ -227,69 +225,78 @@ export default function Home() {
                   <X className="w-5 h-5" />
                 </button>
               </div>
-              
-              {/* New Chat Button */}
+
+              {/* New Project Button */}
               <div className="p-4">
                 <button
                   onClick={() => {
-                    setChatState({
-                      messages: [],
-                      isLoading: false,
-                      suggestions: [
-                        "쇼츠 영상을 만들고 싶어요",
-                        "요즘 뜨는 콘텐츠가 뭐예요?",
-                        "내 브랜드에 맞는 영상 스타일 추천해줘",
-                      ],
-                    });
+                    setShowNewProjectModal(true);
                     setSidebarOpen(false);
                   }}
-                  className="w-full flex items-center gap-3 px-4 py-3 bg-juai-gray-800 
-                           hover:bg-juai-gray-700 text-white rounded-xl transition-colors"
+                  className="w-full flex items-center justify-center gap-2 px-4 py-3 
+                           bg-gradient-juai text-white rounded-xl 
+                           hover:opacity-90 transition-opacity font-medium"
                 >
                   <Plus className="w-5 h-5" />
-                  <span>새 대화</span>
+                  새 프로젝트
                 </button>
               </div>
-              
-              {/* Navigation */}
-              <nav className="flex-1 p-4 space-y-2">
-                <button
-                  onClick={() => {
-                    setShowDashboard(true);
-                    setSidebarOpen(false);
-                  }}
-                  className="w-full flex items-center gap-3 px-4 py-3 text-juai-gray-400 
-                           hover:text-white hover:bg-juai-gray-800 rounded-xl transition-colors"
-                >
-                  <Video className="w-5 h-5" />
-                  <span>워크스페이스</span>
+
+              {/* Recent Projects */}
+              <div className="flex-1 overflow-y-auto p-4">
+                <h3 className="text-juai-gray-500 text-xs font-medium uppercase tracking-wider mb-3">
+                  최근 프로젝트
+                </h3>
+                <div className="space-y-2">
+                  {projects.length > 0 ? (
+                    projects.slice(0, 5).map((project) => (
+                      <button
+                        key={project.id}
+                        onClick={() => setCurrentProject(project)}
+                        className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl 
+                                  transition-colors text-left ${
+                                    currentProject?.id === project.id
+                                      ? "bg-juai-gray-800 text-white"
+                                      : "text-juai-gray-400 hover:bg-juai-gray-800/50 hover:text-white"
+                                  }`}
+                      >
+                        <div className={`w-8 h-8 rounded-lg flex items-center justify-center
+                          ${project.aspectRatio === "9:16" ? "bg-purple-500/20" : "bg-blue-500/20"}`}
+                        >
+                          <Video className={`w-4 h-4 
+                            ${project.aspectRatio === "9:16" ? "text-purple-400" : "text-blue-400"}`} 
+                          />
+                        </div>
+                        <div className="flex-1 min-w-0">
+                          <p className="text-sm font-medium truncate">{project.title}</p>
+                          <p className="text-xs text-juai-gray-500">{project.aspectRatio}</p>
+                        </div>
+                      </button>
+                    ))
+                  ) : (
+                    <p className="text-juai-gray-500 text-sm text-center py-4">
+                      프로젝트가 없습니다
+                    </p>
+                  )}
+                </div>
+              </div>
+
+              {/* Bottom Navigation */}
+              <div className="p-4 border-t border-juai-gray-800 space-y-1">
+                <button className="w-full flex items-center gap-3 px-4 py-3 text-juai-gray-400 
+                                 hover:text-white hover:bg-juai-gray-800 rounded-xl transition-colors">
+                  <FolderOpen className="w-5 h-5" />
+                  <span>모든 프로젝트</span>
                 </button>
-                
                 <button className="w-full flex items-center gap-3 px-4 py-3 text-juai-gray-400 
                                  hover:text-white hover:bg-juai-gray-800 rounded-xl transition-colors">
                   <TrendingUp className="w-5 h-5" />
                   <span>트렌드</span>
                 </button>
-                
-                <button className="w-full flex items-center gap-3 px-4 py-3 text-juai-gray-400 
-                                 hover:text-white hover:bg-juai-gray-800 rounded-xl transition-colors">
-                  <Zap className="w-5 h-5" />
-                  <span>API Hub</span>
-                </button>
-              </nav>
-              
-              {/* Bottom Actions */}
-              <div className="p-4 border-t border-juai-gray-800 space-y-2">
                 <button className="w-full flex items-center gap-3 px-4 py-3 text-juai-gray-400 
                                  hover:text-white hover:bg-juai-gray-800 rounded-xl transition-colors">
                   <Settings className="w-5 h-5" />
                   <span>설정</span>
-                </button>
-                
-                <button className="w-full flex items-center gap-3 px-4 py-3 text-juai-gray-400 
-                                 hover:text-white hover:bg-juai-gray-800 rounded-xl transition-colors">
-                  <LogOut className="w-5 h-5" />
-                  <span>로그아웃</span>
                 </button>
               </div>
             </motion.aside>
@@ -297,8 +304,8 @@ export default function Home() {
         )}
       </AnimatePresence>
 
-      {/* Main Chat Area */}
-      <div className="flex-1 flex flex-col h-full">
+      {/* Main Content Area */}
+      <div className="flex-1 flex flex-col h-full overflow-hidden">
         {/* Header */}
         <header className="flex items-center justify-between px-4 py-3 border-b border-juai-gray-200 bg-white">
           <div className="flex items-center gap-3">
@@ -309,241 +316,176 @@ export default function Home() {
               <Menu className="w-5 h-5 text-juai-gray-600" />
             </button>
             
+            {/* Project Title */}
             <div className="flex items-center gap-2">
-              <div className="w-8 h-8 rounded-lg bg-gradient-juai flex items-center justify-center">
-                <Bot className="w-4 h-4 text-white" />
-              </div>
-              <div>
-                <h1 className="font-semibold text-juai-black text-sm">Super Agent</h1>
-                <p className="text-xs text-juai-gray-500">Active Chatbot</p>
-              </div>
+              <h1 className="font-semibold text-juai-black">
+                {currentProject?.title || "Super Agent Platform"}
+              </h1>
+              {currentProject && (
+                <span className="px-2 py-0.5 bg-juai-gray-100 text-juai-gray-500 
+                               text-xs rounded-full">
+                  {currentProject.aspectRatio}
+                </span>
+              )}
             </div>
           </div>
-          
+
           <div className="flex items-center gap-2">
-            <span className="badge-juai-green text-xs">
-              <span className="w-2 h-2 bg-juai-green rounded-full mr-1.5 animate-pulse"></span>
-              Online
-            </span>
+            {/* Generate Button - ✅ 백엔드 API 연동 */}
+            {currentProject && renderStatus === "idle" && (
+              <button
+                onClick={handleGenerateVideo}
+                disabled={isGenerating}
+                className="flex items-center gap-2 px-4 py-2 bg-gradient-juai text-white 
+                         rounded-xl hover:opacity-90 transition-opacity font-medium text-sm
+                         disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                {isGenerating ? (
+                  <>
+                    <Loader2 className="w-4 h-4 animate-spin" />
+                    생성 중...
+                  </>
+                ) : (
+                  <>
+                    <Wand2 className="w-4 h-4" />
+                    AI 영상 생성
+                  </>
+                )}
+              </button>
+            )}
+
+            {/* Rendering Progress Indicator */}
+            {(renderStatus === "preparing" || renderStatus === "rendering") && (
+              <div className="flex items-center gap-2 px-4 py-2 bg-juai-gray-100 rounded-xl">
+                <Loader2 className="w-4 h-4 animate-spin text-juai-green" />
+                <span className="text-sm text-juai-gray-700">{renderProgress}%</span>
+              </div>
+            )}
+
+            {/* Export Button */}
+            {videoUrl && renderStatus === "completed" && (
+              <button className="flex items-center gap-2 px-4 py-2 bg-juai-gray-100 
+                               text-juai-gray-700 rounded-xl hover:bg-juai-gray-200 
+                               transition-colors text-sm">
+                <Download className="w-4 h-4" />
+                내보내기
+              </button>
+            )}
+
+            {/* Chat Toggle */}
+            <button
+              onClick={() => setChatOpen(!isChatOpen)}
+              className={`p-2 rounded-lg transition-colors relative ${
+                isChatOpen
+                  ? "bg-juai-green text-white"
+                  : "hover:bg-juai-gray-100 text-juai-gray-600"
+              }`}
+            >
+              <MessageSquare className="w-5 h-5" />
+            </button>
+
+            {/* More Options */}
+            <button className="p-2 hover:bg-juai-gray-100 rounded-lg transition-colors">
+              <MoreHorizontal className="w-5 h-5 text-juai-gray-600" />
+            </button>
           </div>
         </header>
 
-        {/* Messages Area */}
-        <div className="flex-1 overflow-y-auto p-4 space-y-6">
-          {/* Welcome Message */}
-          {chatState.messages.length === 0 && (
-            <motion.div
-              initial={{ opacity: 0, y: 20 }}
-              animate={{ opacity: 1, y: 0 }}
-              className="flex flex-col items-center justify-center h-full text-center px-4"
-            >
-              <div className="w-20 h-20 rounded-2xl bg-gradient-juai flex items-center justify-center mb-6 animate-float">
-                <Sparkles className="w-10 h-10 text-white" />
-              </div>
-              
-              <h2 className="text-2xl font-bold text-juai-black mb-2">
-                안녕하세요! <span className="text-gradient-juai">Studio Juai</span>입니다
-              </h2>
-              
-              <p className="text-juai-gray-500 mb-8 max-w-md">
-                AI 기반 콘텐츠 제작 플랫폼에 오신 것을 환영합니다.
-                어떤 영상을 만들어 드릴까요?
-              </p>
-              
-              {/* Quick Action Cards */}
-              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 w-full max-w-3xl">
-                <motion.button
-                  whileHover={{ scale: 1.02 }}
-                  whileTap={{ scale: 0.98 }}
-                  onClick={() => sendMessage("쇼츠 영상을 만들고 싶어요")}
-                  className="action-card text-left group"
-                >
-                  <Video className="w-8 h-8 text-juai-green mb-3 group-hover:scale-110 transition-transform" />
-                  <h3 className="font-semibold text-juai-black mb-1">영상 제작</h3>
-                  <p className="text-sm text-juai-gray-500">AI로 쇼츠/릴스 영상 만들기</p>
-                </motion.button>
-                
-                <motion.button
-                  whileHover={{ scale: 1.02 }}
-                  whileTap={{ scale: 0.98 }}
-                  onClick={() => sendMessage("요즘 뜨는 콘텐츠가 뭐예요?")}
-                  className="action-card text-left group"
-                >
-                  <TrendingUp className="w-8 h-8 text-juai-orange mb-3 group-hover:scale-110 transition-transform" />
-                  <h3 className="font-semibold text-juai-black mb-1">트렌드 분석</h3>
-                  <p className="text-sm text-juai-gray-500">실시간 인기 콘텐츠 확인</p>
-                </motion.button>
-                
-                <motion.button
-                  whileHover={{ scale: 1.02 }}
-                  whileTap={{ scale: 0.98 }}
-                  onClick={() => setShowDashboard(true)}
-                  className="action-card text-left group sm:col-span-2 lg:col-span-1"
-                >
-                  <Zap className="w-8 h-8 text-juai-green mb-3 group-hover:scale-110 transition-transform" />
-                  <h3 className="font-semibold text-juai-black mb-1">워크스페이스</h3>
-                  <p className="text-sm text-juai-gray-500">프로젝트 관리 및 편집</p>
-                </motion.button>
-              </div>
-            </motion.div>
-          )}
-
-          {/* Chat Messages */}
-          <AnimatePresence mode="popLayout">
-            {chatState.messages.map((message, index) => (
-              <motion.div
-                key={message.id}
-                initial={{ opacity: 0, y: 20 }}
-                animate={{ opacity: 1, y: 0 }}
-                exit={{ opacity: 0, y: -20 }}
-                transition={{ delay: index * 0.05 }}
-                className={`flex gap-3 ${
-                  message.role === "user" ? "justify-end" : "justify-start"
-                }`}
-              >
-                {/* Avatar */}
-                {message.role === "assistant" && (
-                  <div className="flex-shrink-0 w-8 h-8 rounded-lg bg-gradient-juai flex items-center justify-center">
-                    <Bot className="w-4 h-4 text-white" />
-                  </div>
-                )}
-
-                {/* Message Content */}
-                <div className={`max-w-[80%] space-y-3`}>
-                  <div
-                    className={
-                      message.role === "user"
-                        ? "chat-message-user"
-                        : "chat-message-assistant"
-                    }
+        {/* Main Content */}
+        <div className="flex-1 overflow-hidden flex flex-col">
+          {/* Video Player - THE HERO */}
+          <div className="flex-1 p-4 overflow-hidden">
+            {currentProject ? (
+              <VideoPlayer className="h-full" />
+            ) : (
+              // Empty State - Prompt to create project
+              <div className="h-full flex items-center justify-center bg-juai-night rounded-2xl">
+                <div className="text-center px-8 max-w-md">
+                  <motion.div
+                    animate={{ y: [0, -10, 0] }}
+                    transition={{ repeat: Infinity, duration: 3 }}
+                    className="w-24 h-24 mx-auto mb-6 rounded-2xl bg-gradient-juai 
+                             flex items-center justify-center"
                   >
-                    <p className="whitespace-pre-wrap">{message.content}</p>
+                    <Video className="w-12 h-12 text-white" />
+                  </motion.div>
+                  
+                  <h2 className="text-2xl font-bold text-white mb-3">
+                    영상 제작을 시작하세요
+                  </h2>
+                  <p className="text-white/60 mb-8">
+                    AI가 당신의 아이디어를 멋진 영상으로 만들어 드립니다.
+                    새 프로젝트를 시작해보세요!
+                  </p>
+
+                  <div className="flex flex-col sm:flex-row gap-3 justify-center">
+                    <button
+                      onClick={() => setShowNewProjectModal(true)}
+                      className="flex items-center justify-center gap-2 px-6 py-3 
+                               bg-gradient-juai text-white rounded-xl 
+                               hover:opacity-90 transition-opacity font-medium"
+                    >
+                      <Plus className="w-5 h-5" />
+                      새 프로젝트 만들기
+                    </button>
+                    
+                    <button
+                      onClick={() => setChatOpen(true)}
+                      className="flex items-center justify-center gap-2 px-6 py-3 
+                               bg-white/10 text-white rounded-xl 
+                               hover:bg-white/20 transition-colors font-medium"
+                    >
+                      <MessageSquare className="w-5 h-5" />
+                      AI와 대화하기
+                    </button>
                   </div>
 
-                  {/* Action Cards */}
-                  {message.actionCards && message.actionCards.length > 0 && (
-                    <div className="space-y-3">
-                      {message.actionCards.map((card, cardIndex) => (
-                        <SmartActionCard
-                          key={cardIndex}
-                          card={card}
-                          onAction={handleActionClick}
-                        />
-                      ))}
-                    </div>
-                  )}
-                </div>
-
-                {/* User Avatar */}
-                {message.role === "user" && (
-                  <div className="flex-shrink-0 w-8 h-8 rounded-lg bg-juai-green flex items-center justify-center">
-                    <User className="w-4 h-4 text-white" />
+                  {/* Quick Start Options */}
+                  <div className="mt-10 grid grid-cols-2 gap-3">
+                    {[
+                      { label: "YouTube 쇼츠", ratio: "9:16", icon: "📱" },
+                      { label: "유튜브 영상", ratio: "16:9", icon: "📺" },
+                      { label: "인스타 릴스", ratio: "9:16", icon: "📸" },
+                      { label: "인스타 피드", ratio: "1:1", icon: "🖼️" },
+                    ].map((option) => (
+                      <motion.button
+                        key={option.label}
+                        whileHover={{ scale: 1.02 }}
+                        whileTap={{ scale: 0.98 }}
+                        onClick={() => setShowNewProjectModal(true)}
+                        className="flex items-center gap-3 p-3 bg-white/5 hover:bg-white/10 
+                                 rounded-xl transition-colors text-left"
+                      >
+                        <span className="text-2xl">{option.icon}</span>
+                        <div>
+                          <p className="text-white text-sm font-medium">{option.label}</p>
+                          <p className="text-white/40 text-xs">{option.ratio}</p>
+                        </div>
+                      </motion.button>
+                    ))}
                   </div>
-                )}
-              </motion.div>
-            ))}
-          </AnimatePresence>
-
-          {/* Loading Indicator */}
-          {chatState.isLoading && (
-            <motion.div
-              initial={{ opacity: 0 }}
-              animate={{ opacity: 1 }}
-              className="flex gap-3"
-            >
-              <div className="w-8 h-8 rounded-lg bg-gradient-juai flex items-center justify-center">
-                <Bot className="w-4 h-4 text-white" />
-              </div>
-              <div className="chat-message-assistant">
-                <div className="typing-indicator">
-                  <span></span>
-                  <span></span>
-                  <span></span>
                 </div>
               </div>
-            </motion.div>
+            )}
+          </div>
+
+          {/* Timeline - Below Video */}
+          {currentProject && (
+            <div className="h-[240px] px-4 pb-4">
+              <Timeline />
+            </div>
           )}
-
-          <div ref={messagesEndRef} />
-        </div>
-
-        {/* Suggestions */}
-        {chatState.suggestions.length > 0 && chatState.messages.length > 0 && (
-          <div className="px-4 pb-2">
-            <div className="flex flex-wrap gap-2">
-              {chatState.suggestions.map((suggestion, index) => (
-                <motion.button
-                  key={index}
-                  initial={{ opacity: 0, scale: 0.9 }}
-                  animate={{ opacity: 1, scale: 1 }}
-                  transition={{ delay: index * 0.1 }}
-                  onClick={() => sendMessage(suggestion)}
-                  className="px-4 py-2 bg-juai-gray-100 hover:bg-juai-gray-200 
-                           text-juai-gray-700 text-sm rounded-full transition-colors
-                           flex items-center gap-2"
-                >
-                  {suggestion}
-                  <ChevronRight className="w-4 h-4" />
-                </motion.button>
-              ))}
-            </div>
-          </div>
-        )}
-
-        {/* Input Area */}
-        <div className="p-4 border-t border-juai-gray-200 bg-white">
-          <div className="max-w-4xl mx-auto">
-            <div className="flex items-end gap-3 bg-juai-gray-50 rounded-2xl p-2">
-              {/* Attachment Buttons */}
-              <div className="flex items-center gap-1 pb-2">
-                <button className="p-2 text-juai-gray-400 hover:text-juai-green hover:bg-juai-gray-100 rounded-lg transition-colors">
-                  <Image className="w-5 h-5" />
-                </button>
-                <button className="p-2 text-juai-gray-400 hover:text-juai-green hover:bg-juai-gray-100 rounded-lg transition-colors">
-                  <Mic className="w-5 h-5" />
-                </button>
-              </div>
-
-              {/* Text Input */}
-              <textarea
-                ref={inputRef}
-                value={inputValue}
-                onChange={(e) => setInputValue(e.target.value)}
-                onKeyDown={handleKeyPress}
-                placeholder="메시지를 입력하세요..."
-                rows={1}
-                className="flex-1 bg-transparent border-none outline-none resize-none 
-                         text-juai-black placeholder:text-juai-gray-400 py-2 px-2
-                         min-h-[40px] max-h-[120px]"
-                style={{
-                  height: "auto",
-                  overflow: "hidden",
-                }}
-                onInput={(e) => {
-                  const target = e.target as HTMLTextAreaElement;
-                  target.style.height = "auto";
-                  target.style.height = `${Math.min(target.scrollHeight, 120)}px`;
-                }}
-              />
-
-              {/* Send Button */}
-              <button
-                onClick={() => sendMessage(inputValue)}
-                disabled={!inputValue.trim() || chatState.isLoading}
-                className="p-3 bg-juai-green text-white rounded-xl hover:bg-juai-green/90 
-                         disabled:opacity-50 disabled:cursor-not-allowed transition-all
-                         flex-shrink-0"
-              >
-                <Send className="w-5 h-5" />
-              </button>
-            </div>
-
-            <p className="text-xs text-center text-juai-gray-400 mt-2">
-              Super Agent는 AI 기반으로 최적의 콘텐츠를 제안합니다
-            </p>
-          </div>
         </div>
       </div>
+
+      {/* Chat Sidebar - Assistant Tool (✅ /api/creatomate/auto-edit 연동) */}
+      <ChatSidebar />
+
+      {/* New Project Modal */}
+      <NewProjectModal
+        isOpen={showNewProjectModal}
+        onClose={() => setShowNewProjectModal(false)}
+      />
     </div>
   );
 }

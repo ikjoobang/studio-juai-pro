@@ -1,0 +1,422 @@
+"use client";
+
+/**
+ * NewProjectModal - 새 프로젝트 생성 모달
+ * VIDEO FIRST: Aspect Ratio 선택이 가장 먼저!
+ */
+
+import { useState } from "react";
+import { motion, AnimatePresence } from "framer-motion";
+import {
+  X,
+  Monitor,
+  Smartphone,
+  Square,
+  RectangleVertical,
+  Sparkles,
+  ArrowRight,
+  Check,
+} from "lucide-react";
+import { AspectRatio, useVideoStore, useUIStore } from "@/lib/store";
+
+interface NewProjectModalProps {
+  isOpen: boolean;
+  onClose: () => void;
+}
+
+interface AspectRatioOption {
+  value: AspectRatio;
+  label: string;
+  description: string;
+  icon: React.ReactNode;
+  platforms: string[];
+  dimensions: string;
+}
+
+const aspectRatioOptions: AspectRatioOption[] = [
+  {
+    value: "16:9",
+    label: "가로형",
+    description: "YouTube, 웹사이트",
+    icon: <Monitor className="w-8 h-8" />,
+    platforms: ["YouTube", "웹"],
+    dimensions: "1920 × 1080",
+  },
+  {
+    value: "9:16",
+    label: "세로형",
+    description: "쇼츠, 릴스, 틱톡",
+    icon: <Smartphone className="w-8 h-8" />,
+    platforms: ["YouTube Shorts", "Reels", "TikTok"],
+    dimensions: "1080 × 1920",
+  },
+  {
+    value: "1:1",
+    label: "정사각형",
+    description: "인스타그램 피드",
+    icon: <Square className="w-8 h-8" />,
+    platforms: ["Instagram Feed"],
+    dimensions: "1080 × 1080",
+  },
+  {
+    value: "4:5",
+    label: "세로 피드",
+    description: "인스타그램 피드",
+    icon: <RectangleVertical className="w-8 h-8" />,
+    platforms: ["Instagram Feed"],
+    dimensions: "1080 × 1350",
+  },
+];
+
+const presetOptions = [
+  { id: "warm_film", label: "따뜻한 필름", emoji: "🎞️" },
+  { id: "cool_modern", label: "시원한 모던", emoji: "❄️" },
+  { id: "golden_hour", label: "골든아워", emoji: "🌅" },
+  { id: "cinematic_teal_orange", label: "시네마틱", emoji: "🎬" },
+];
+
+export default function NewProjectModal({ isOpen, onClose }: NewProjectModalProps) {
+  const [step, setStep] = useState(1);
+  const [selectedRatio, setSelectedRatio] = useState<AspectRatio>("9:16");
+  const [title, setTitle] = useState("");
+  const [description, setDescription] = useState("");
+  const [selectedPreset, setSelectedPreset] = useState("warm_film");
+  
+  const addProject = useVideoStore((state) => state.addProject);
+  const setCurrentProject = useVideoStore((state) => state.setCurrentProject);
+
+  const handleCreate = () => {
+    const newProject = {
+      id: `project_${Date.now()}`,
+      title: title || "새 프로젝트",
+      description,
+      aspectRatio: selectedRatio,
+      status: "idle" as const,
+      progress: 0,
+      preset: selectedPreset,
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    };
+    
+    addProject(newProject);
+    setCurrentProject(newProject);
+    
+    // Reset form
+    setStep(1);
+    setSelectedRatio("9:16");
+    setTitle("");
+    setDescription("");
+    setSelectedPreset("warm_film");
+    
+    onClose();
+  };
+
+  const handleClose = () => {
+    setStep(1);
+    onClose();
+  };
+
+  return (
+    <AnimatePresence>
+      {isOpen && (
+        <>
+          {/* Backdrop */}
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            onClick={handleClose}
+            className="fixed inset-0 bg-black/60 backdrop-blur-sm z-50"
+          />
+
+          {/* Modal */}
+          <motion.div
+            initial={{ opacity: 0, scale: 0.95, y: 20 }}
+            animate={{ opacity: 1, scale: 1, y: 0 }}
+            exit={{ opacity: 0, scale: 0.95, y: 20 }}
+            className="fixed inset-0 flex items-center justify-center z-50 p-4"
+          >
+            <div className="bg-white rounded-2xl shadow-2xl w-full max-w-2xl overflow-hidden">
+              {/* Header */}
+              <div className="flex items-center justify-between p-6 border-b border-juai-gray-200">
+                <div className="flex items-center gap-3">
+                  <div className="w-10 h-10 rounded-xl bg-gradient-juai flex items-center justify-center">
+                    <Sparkles className="w-5 h-5 text-white" />
+                  </div>
+                  <div>
+                    <h2 className="text-xl font-bold text-juai-black">
+                      새 프로젝트 만들기
+                    </h2>
+                    <p className="text-sm text-juai-gray-500">
+                      {step === 1 ? "영상 비율 선택" : "프로젝트 정보 입력"}
+                    </p>
+                  </div>
+                </div>
+                
+                <button
+                  onClick={handleClose}
+                  className="p-2 hover:bg-juai-gray-100 rounded-lg transition-colors"
+                >
+                  <X className="w-5 h-5 text-juai-gray-500" />
+                </button>
+              </div>
+
+              {/* Progress Bar */}
+              <div className="h-1 bg-juai-gray-100">
+                <motion.div
+                  className="h-full bg-gradient-juai"
+                  initial={{ width: "50%" }}
+                  animate={{ width: step === 1 ? "50%" : "100%" }}
+                />
+              </div>
+
+              {/* Content */}
+              <div className="p-6">
+                <AnimatePresence mode="wait">
+                  {step === 1 ? (
+                    <motion.div
+                      key="step1"
+                      initial={{ opacity: 0, x: -20 }}
+                      animate={{ opacity: 1, x: 0 }}
+                      exit={{ opacity: 0, x: 20 }}
+                    >
+                      {/* Step 1: Aspect Ratio Selection - THE HERO */}
+                      <h3 className="text-lg font-semibold text-juai-black mb-2">
+                        어떤 비율로 만들까요?
+                      </h3>
+                      <p className="text-juai-gray-500 mb-6">
+                        타겟 플랫폼에 맞는 비율을 선택하세요
+                      </p>
+
+                      {/* Aspect Ratio Grid - BIG & VISUAL */}
+                      <div className="grid grid-cols-2 gap-4 mb-6">
+                        {aspectRatioOptions.map((option) => (
+                          <motion.button
+                            key={option.value}
+                            whileHover={{ scale: 1.02 }}
+                            whileTap={{ scale: 0.98 }}
+                            onClick={() => setSelectedRatio(option.value)}
+                            className={`relative p-6 rounded-2xl border-2 transition-all text-left
+                              ${selectedRatio === option.value
+                                ? "border-juai-green bg-juai-green/5"
+                                : "border-juai-gray-200 hover:border-juai-gray-300 bg-white"
+                              }`}
+                          >
+                            {/* Selection Indicator */}
+                            {selectedRatio === option.value && (
+                              <motion.div
+                                initial={{ scale: 0 }}
+                                animate={{ scale: 1 }}
+                                className="absolute top-3 right-3 w-6 h-6 bg-juai-green rounded-full
+                                         flex items-center justify-center"
+                              >
+                                <Check className="w-4 h-4 text-white" />
+                              </motion.div>
+                            )}
+
+                            {/* Visual Preview */}
+                            <div className="flex items-center gap-4 mb-4">
+                              <div className={`flex items-center justify-center rounded-lg
+                                ${selectedRatio === option.value
+                                  ? "text-juai-green"
+                                  : "text-juai-gray-400"
+                                }
+                                ${option.value === "16:9" ? "w-16 h-9 bg-current/10" : ""}
+                                ${option.value === "9:16" ? "w-9 h-16 bg-current/10" : ""}
+                                ${option.value === "1:1" ? "w-12 h-12 bg-current/10" : ""}
+                                ${option.value === "4:5" ? "w-10 h-12 bg-current/10" : ""}
+                              `}>
+                                <div className={`
+                                  ${option.value === "16:9" ? "w-14 h-8" : ""}
+                                  ${option.value === "9:16" ? "w-7 h-14" : ""}
+                                  ${option.value === "1:1" ? "w-10 h-10" : ""}
+                                  ${option.value === "4:5" ? "w-8 h-10" : ""}
+                                  border-2 rounded ${
+                                    selectedRatio === option.value
+                                      ? "border-juai-green bg-juai-green/20"
+                                      : "border-juai-gray-300 bg-juai-gray-50"
+                                  }
+                                `} />
+                              </div>
+                              
+                              <div>
+                                <div className="font-bold text-juai-black text-lg">
+                                  {option.label}
+                                </div>
+                                <div className="text-sm text-juai-gray-500">
+                                  {option.value}
+                                </div>
+                              </div>
+                            </div>
+
+                            {/* Platform Tags */}
+                            <div className="flex flex-wrap gap-1.5">
+                              {option.platforms.map((platform) => (
+                                <span
+                                  key={platform}
+                                  className={`px-2 py-0.5 text-xs rounded-full
+                                    ${selectedRatio === option.value
+                                      ? "bg-juai-green/10 text-juai-green"
+                                      : "bg-juai-gray-100 text-juai-gray-500"
+                                    }`}
+                                >
+                                  {platform}
+                                </span>
+                              ))}
+                            </div>
+
+                            {/* Dimensions */}
+                            <div className="mt-2 text-xs text-juai-gray-400">
+                              {option.dimensions}
+                            </div>
+                          </motion.button>
+                        ))}
+                      </div>
+                    </motion.div>
+                  ) : (
+                    <motion.div
+                      key="step2"
+                      initial={{ opacity: 0, x: 20 }}
+                      animate={{ opacity: 1, x: 0 }}
+                      exit={{ opacity: 0, x: -20 }}
+                    >
+                      {/* Step 2: Project Details */}
+                      <h3 className="text-lg font-semibold text-juai-black mb-2">
+                        프로젝트 정보
+                      </h3>
+                      <p className="text-juai-gray-500 mb-6">
+                        기본 정보를 입력하세요 (나중에 수정 가능)
+                      </p>
+
+                      {/* Selected Ratio Display */}
+                      <div className="flex items-center gap-3 p-4 bg-juai-gray-50 rounded-xl mb-6">
+                        <div className={`flex items-center justify-center rounded-lg text-juai-green
+                          ${selectedRatio === "16:9" ? "w-12 h-7" : ""}
+                          ${selectedRatio === "9:16" ? "w-7 h-12" : ""}
+                          ${selectedRatio === "1:1" ? "w-10 h-10" : ""}
+                          ${selectedRatio === "4:5" ? "w-8 h-10" : ""}
+                        `}>
+                          <div className={`border-2 border-juai-green bg-juai-green/20 rounded
+                            ${selectedRatio === "16:9" ? "w-10 h-6" : ""}
+                            ${selectedRatio === "9:16" ? "w-5 h-10" : ""}
+                            ${selectedRatio === "1:1" ? "w-8 h-8" : ""}
+                            ${selectedRatio === "4:5" ? "w-6 h-8" : ""}
+                          `} />
+                        </div>
+                        <div>
+                          <div className="font-medium text-juai-black">
+                            {aspectRatioOptions.find(o => o.value === selectedRatio)?.label}
+                          </div>
+                          <div className="text-sm text-juai-gray-500">{selectedRatio}</div>
+                        </div>
+                        <button
+                          onClick={() => setStep(1)}
+                          className="ml-auto text-sm text-juai-green hover:underline"
+                        >
+                          변경
+                        </button>
+                      </div>
+
+                      {/* Title Input */}
+                      <div className="mb-4">
+                        <label className="block text-sm font-medium text-juai-gray-700 mb-2">
+                          프로젝트 제목
+                        </label>
+                        <input
+                          type="text"
+                          value={title}
+                          onChange={(e) => setTitle(e.target.value)}
+                          placeholder="예: 신제품 홍보 영상"
+                          className="w-full px-4 py-3 border border-juai-gray-200 rounded-xl
+                                   focus:outline-none focus:ring-2 focus:ring-juai-green/20 
+                                   focus:border-juai-green transition-all"
+                        />
+                      </div>
+
+                      {/* Description Input */}
+                      <div className="mb-4">
+                        <label className="block text-sm font-medium text-juai-gray-700 mb-2">
+                          간단한 설명 (선택)
+                        </label>
+                        <textarea
+                          value={description}
+                          onChange={(e) => setDescription(e.target.value)}
+                          placeholder="어떤 내용의 영상을 만들고 싶으신가요?"
+                          rows={3}
+                          className="w-full px-4 py-3 border border-juai-gray-200 rounded-xl
+                                   focus:outline-none focus:ring-2 focus:ring-juai-green/20 
+                                   focus:border-juai-green transition-all resize-none"
+                        />
+                      </div>
+
+                      {/* Preset Selection */}
+                      <div>
+                        <label className="block text-sm font-medium text-juai-gray-700 mb-2">
+                          색감 프리셋
+                        </label>
+                        <div className="flex flex-wrap gap-2">
+                          {presetOptions.map((preset) => (
+                            <button
+                              key={preset.id}
+                              onClick={() => setSelectedPreset(preset.id)}
+                              className={`px-4 py-2 rounded-full text-sm font-medium transition-all
+                                ${selectedPreset === preset.id
+                                  ? "bg-juai-green text-white"
+                                  : "bg-juai-gray-100 text-juai-gray-600 hover:bg-juai-gray-200"
+                                }`}
+                            >
+                              {preset.emoji} {preset.label}
+                            </button>
+                          ))}
+                        </div>
+                      </div>
+                    </motion.div>
+                  )}
+                </AnimatePresence>
+              </div>
+
+              {/* Footer */}
+              <div className="flex items-center justify-between p-6 border-t border-juai-gray-200 bg-juai-gray-50">
+                {step === 1 ? (
+                  <>
+                    <button
+                      onClick={handleClose}
+                      className="px-6 py-2.5 text-juai-gray-600 hover:text-juai-black transition-colors"
+                    >
+                      취소
+                    </button>
+                    <button
+                      onClick={() => setStep(2)}
+                      className="flex items-center gap-2 px-6 py-2.5 bg-juai-green text-white 
+                               rounded-xl hover:bg-juai-green/90 transition-colors font-medium"
+                    >
+                      다음
+                      <ArrowRight className="w-4 h-4" />
+                    </button>
+                  </>
+                ) : (
+                  <>
+                    <button
+                      onClick={() => setStep(1)}
+                      className="px-6 py-2.5 text-juai-gray-600 hover:text-juai-black transition-colors"
+                    >
+                      이전
+                    </button>
+                    <button
+                      onClick={handleCreate}
+                      className="flex items-center gap-2 px-6 py-2.5 bg-juai-green text-white 
+                               rounded-xl hover:bg-juai-green/90 transition-colors font-medium"
+                    >
+                      <Sparkles className="w-4 h-4" />
+                      프로젝트 시작
+                    </button>
+                  </>
+                )}
+              </div>
+            </div>
+          </motion.div>
+        </>
+      )}
+    </AnimatePresence>
+  );
+}
