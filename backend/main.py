@@ -15,7 +15,7 @@ import json
 from enum import Enum
 
 from database import get_supabase_client, SupabaseClient
-from factory_engine import FactoryEngine, VideoRequest
+from factory_engine import FactoryEngine, VideoRequest, CreatomateClient
 
 # FastAPI 앱 초기화
 app = FastAPI(
@@ -483,6 +483,159 @@ async def execute_action_card(card_type: str, action: str, data: Dict[str, Any])
     else:
         raise HTTPException(status_code=400, detail="Unknown action")
 
+
+# ============================================
+# Creatomate 영상 자동 편집 Endpoints
+# ============================================
+
+class CreatomateRenderRequest(BaseModel):
+    """Creatomate 렌더링 요청 모델"""
+    project_id: str
+    template_id: str
+    modifications: Dict[str, Any] = {}
+    output_format: str = "mp4"
+
+class CreatomateTemplateRequest(BaseModel):
+    """Creatomate 템플릿 기반 영상 생성 요청"""
+    project_id: str
+    template_id: str
+    headline: str
+    subheadline: Optional[str] = ""
+    background_video_url: Optional[str] = None
+    background_image_url: Optional[str] = None
+    logo_url: Optional[str] = None
+    cta_text: str = "자세히 보기"
+    brand_color: str = "#03C75A"  # Juai Green
+    duration: Optional[float] = None
+
+# Creatomate 클라이언트 인스턴스
+creatomate_client = CreatomateClient()
+
+@app.get("/api/creatomate/templates")
+async def list_creatomate_templates():
+    """Creatomate 템플릿 목록 조회"""
+    try:
+        templates = await creatomate_client.list_templates()
+        return {"success": True, "templates": templates}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/api/creatomate/render")
+async def render_creatomate_video(
+    request: CreatomateRenderRequest,
+    background_tasks: BackgroundTasks
+):
+    """Creatomate 템플릿으로 영상 렌더링"""
+    try:
+        result = await creatomate_client.render_video(
+            template_id=request.template_id,
+            modifications=request.modifications,
+            output_format=request.output_format
+        )
+        
+        # 렌더링 완료 후 자산 저장 (백그라운드)
+        if result.get("url"):
+            background_tasks.add_task(
+                save_rendered_asset,
+                project_id=request.project_id,
+                url=result["url"],
+                render_id=result.get("id")
+            )
+        
+        return {
+            "success": True,
+            "render_id": result.get("id"),
+            "status": result.get("status"),
+            "url": result.get("url"),
+            "message": "렌더링이 시작되었습니다."
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/api/creatomate/auto-edit")
+async def auto_edit_video(
+    request: CreatomateTemplateRequest,
+    background_tasks: BackgroundTasks
+):
+    """Creatomate 영상 자동 편집 (아이폰 감성 주입)"""
+    
+    # 아이폰 감성 스타일 적용
+    modifications = {
+        "headline": request.headline,
+        "subheadline": request.subheadline,
+        "cta_text": request.cta_text,
+        "brand_color": request.brand_color,
+        # 아이폰 감성 필터 적용
+        "filter": "warm_film",
+        "color_temperature": "warm",
+        "grain_intensity": 0.15,
+    }
+    
+    # 배경 미디어 설정
+    if request.background_video_url:
+        modifications["background_video"] = request.background_video_url
+    if request.background_image_url:
+        modifications["background_image"] = request.background_image_url
+    if request.logo_url:
+        modifications["logo"] = request.logo_url
+    if request.duration:
+        modifications["duration"] = request.duration
+    
+    try:
+        result = await creatomate_client.render_video(
+            template_id=request.template_id,
+            modifications=modifications,
+            output_format="mp4"
+        )
+        
+        # 자산 저장 (백그라운드)
+        if result.get("url") or result.get("id"):
+            background_tasks.add_task(
+                save_rendered_asset,
+                project_id=request.project_id,
+                url=result.get("url", ""),
+                render_id=result.get("id")
+            )
+        
+        return {
+            "success": True,
+            "render_id": result.get("id"),
+            "status": "processing",
+            "message": "아이폰 감성 영상 편집이 시작되었습니다.",
+            "modifications_applied": modifications
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/api/creatomate/render/{render_id}")
+async def get_render_status(render_id: str):
+    """Creatomate 렌더링 상태 조회"""
+    try:
+        result = await creatomate_client.get_render_status(render_id)
+        return {
+            "success": True,
+            "render_id": render_id,
+            "status": result.get("status"),
+            "url": result.get("url"),
+            "progress": result.get("progress", 0)
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+async def save_rendered_asset(project_id: str, url: str, render_id: str = None):
+    """렌더링된 자산을 DB에 저장"""
+    try:
+        supabase = get_supabase_client()
+        asset_data = {
+            "project_id": project_id,
+            "type": "video",
+            "url": url,
+            "prompt_used": f"creatomate_render_{render_id}" if render_id else "creatomate_render",
+            "status": "created"
+        }
+        supabase.table("assets").insert(asset_data).execute()
+    except Exception as e:
+        print(f"Failed to save rendered asset: {e}")
 
 # ============================================
 # 프롬프트 생성 (아이폰 감성)

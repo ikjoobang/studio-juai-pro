@@ -97,6 +97,54 @@ STYLE_PRESETS = {
 # API Clients
 # ============================================
 
+# ============================================
+# 아이폰 감성 영상 편집 프리셋
+# ============================================
+
+IPHONE_AESTHETIC_PRESETS = {
+    "warm_film": {
+        "color_temperature": 6500,
+        "saturation": 0.85,
+        "contrast": 1.1,
+        "brightness": 1.05,
+        "grain_intensity": 0.15,
+        "vignette": 0.2,
+        "highlight_tint": "#FFF5E6",
+        "shadow_tint": "#1A1A2E"
+    },
+    "cool_modern": {
+        "color_temperature": 5500,
+        "saturation": 0.9,
+        "contrast": 1.15,
+        "brightness": 1.0,
+        "grain_intensity": 0.05,
+        "vignette": 0.1,
+        "highlight_tint": "#F0F8FF",
+        "shadow_tint": "#0A0A1A"
+    },
+    "golden_hour": {
+        "color_temperature": 7000,
+        "saturation": 0.95,
+        "contrast": 1.2,
+        "brightness": 1.1,
+        "grain_intensity": 0.2,
+        "vignette": 0.25,
+        "highlight_tint": "#FFE4B5",
+        "shadow_tint": "#2D1B00"
+    },
+    "cinematic_teal_orange": {
+        "color_temperature": 6000,
+        "saturation": 1.0,
+        "contrast": 1.25,
+        "brightness": 0.95,
+        "grain_intensity": 0.25,
+        "vignette": 0.3,
+        "highlight_tint": "#FFA500",
+        "shadow_tint": "#008080"
+    }
+}
+
+
 class CreatomateClient:
     """Creatomate API 클라이언트 - 영상 템플릿 자동 편집"""
     
@@ -111,6 +159,13 @@ class CreatomateClient:
         output_format: str = "mp4"
     ) -> Dict[str, Any]:
         """템플릿 기반 영상 렌더링"""
+        
+        if not self.api_key:
+            return {
+                "status": "error",
+                "message": "CREATOMATE_API_KEY not configured",
+                "id": f"mock_{datetime.now().timestamp()}"
+            }
         
         async with httpx.AsyncClient() as client:
             response = await client.post(
@@ -127,13 +182,53 @@ class CreatomateClient:
                 timeout=60.0
             )
             
-            if response.status_code == 200:
+            if response.status_code in [200, 201, 202]:
+                return response.json()
+            else:
+                raise Exception(f"Creatomate API Error: {response.text}")
+    
+    async def render_video_with_source(
+        self,
+        source: Dict[str, Any],
+        output_format: str = "mp4"
+    ) -> Dict[str, Any]:
+        """소스 JSON으로 영상 렌더링 (템플릿 없이)"""
+        
+        if not self.api_key:
+            return {
+                "status": "error",
+                "message": "CREATOMATE_API_KEY not configured",
+                "id": f"mock_{datetime.now().timestamp()}"
+            }
+        
+        async with httpx.AsyncClient() as client:
+            response = await client.post(
+                f"{self.base_url}/renders",
+                headers={
+                    "Authorization": f"Bearer {self.api_key}",
+                    "Content-Type": "application/json"
+                },
+                json={
+                    "source": source,
+                    "output_format": output_format
+                },
+                timeout=60.0
+            )
+            
+            if response.status_code in [200, 201, 202]:
                 return response.json()
             else:
                 raise Exception(f"Creatomate API Error: {response.text}")
     
     async def get_render_status(self, render_id: str) -> Dict[str, Any]:
         """렌더링 상태 조회"""
+        
+        if not self.api_key:
+            return {
+                "status": "completed",
+                "url": f"https://example.com/mock_video_{render_id}.mp4",
+                "progress": 100
+            }
         
         async with httpx.AsyncClient() as client:
             response = await client.get(
@@ -146,6 +241,32 @@ class CreatomateClient:
     async def list_templates(self) -> List[Dict[str, Any]]:
         """사용 가능한 템플릿 목록"""
         
+        if not self.api_key:
+            # Mock 템플릿 목록
+            return [
+                {
+                    "id": "template_shorts_001",
+                    "name": "쇼츠 기본 템플릿",
+                    "category": "shorts",
+                    "aspect_ratio": "9:16",
+                    "duration": 15
+                },
+                {
+                    "id": "template_reels_001",
+                    "name": "릴스 제품 홍보",
+                    "category": "reels",
+                    "aspect_ratio": "9:16",
+                    "duration": 30
+                },
+                {
+                    "id": "template_ad_001",
+                    "name": "브랜드 광고",
+                    "category": "advertisement",
+                    "aspect_ratio": "16:9",
+                    "duration": 30
+                }
+            ]
+        
         async with httpx.AsyncClient() as client:
             response = await client.get(
                 f"{self.base_url}/templates",
@@ -153,6 +274,72 @@ class CreatomateClient:
                 timeout=30.0
             )
             return response.json()
+    
+    def apply_iphone_aesthetic(
+        self,
+        modifications: Dict[str, Any],
+        preset: str = "warm_film"
+    ) -> Dict[str, Any]:
+        """아이폰 감성 필터 적용"""
+        
+        aesthetic = IPHONE_AESTHETIC_PRESETS.get(preset, IPHONE_AESTHETIC_PRESETS["warm_film"])
+        
+        # 기존 modifications에 아이폰 감성 필터 추가
+        enhanced = modifications.copy()
+        enhanced.update({
+            "filter_preset": preset,
+            "color_temperature": aesthetic["color_temperature"],
+            "saturation": aesthetic["saturation"],
+            "contrast": aesthetic["contrast"],
+            "brightness": aesthetic["brightness"],
+            "grain_intensity": aesthetic["grain_intensity"],
+            "vignette": aesthetic["vignette"],
+            "highlight_tint": aesthetic["highlight_tint"],
+            "shadow_tint": aesthetic["shadow_tint"]
+        })
+        
+        return enhanced
+    
+    async def auto_edit_shorts(
+        self,
+        project_id: str,
+        content: Dict[str, Any],
+        aesthetic_preset: str = "warm_film"
+    ) -> Dict[str, Any]:
+        """쇼츠 영상 자동 편집 (아이폰 감성 적용)"""
+        
+        # 기본 수정 사항
+        modifications = {
+            "headline": content.get("headline", ""),
+            "subheadline": content.get("subheadline", ""),
+            "cta_text": content.get("cta_text", "자세히 보기"),
+            "brand_color": content.get("brand_color", "#03C75A"),
+            "logo": content.get("logo_url", ""),
+        }
+        
+        # 배경 미디어
+        if content.get("background_video_url"):
+            modifications["background_video"] = content["background_video_url"]
+        if content.get("background_image_url"):
+            modifications["background_image"] = content["background_image_url"]
+        
+        # 아이폰 감성 적용
+        enhanced_modifications = self.apply_iphone_aesthetic(modifications, aesthetic_preset)
+        
+        # 렌더링 실행
+        template_id = content.get("template_id", "template_shorts_001")
+        result = await self.render_video(
+            template_id=template_id,
+            modifications=enhanced_modifications
+        )
+        
+        return {
+            "project_id": project_id,
+            "render_id": result.get("id"),
+            "status": result.get("status", "processing"),
+            "aesthetic_preset": aesthetic_preset,
+            "modifications_applied": enhanced_modifications
+        }
 
 
 class KlingClient:
