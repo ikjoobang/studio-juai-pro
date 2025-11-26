@@ -1,0 +1,258 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* ============================================
+   Studio Juai Design System - Global Styles
+   ============================================ */
+
+/* Pretendard Font Import */
+@import url('https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/static/pretendard.min.css');
+
+/* Base Styles */
+@layer base {
+  :root {
+    /* Juai Color Variables */
+    --juai-black: #111111;
+    --juai-green: #03C75A;
+    --juai-orange: #FF6B35;
+    --juai-night: #1a1a1a;
+    --juai-paper: #ffffff;
+    
+    /* Semantic */
+    --background: #ffffff;
+    --foreground: #111111;
+    --muted: #f5f5f5;
+    --muted-foreground: #737373;
+    --border: #e5e5e5;
+    --ring: #03C75A;
+  }
+  
+  .dark {
+    --background: #111111;
+    --foreground: #ffffff;
+    --muted: #262626;
+    --muted-foreground: #a3a3a3;
+    --border: #404040;
+    --ring: #03C75A;
+  }
+  
+  * {
+    @apply border-border;
+  }
+  
+  html {
+    scroll-behavior: smooth;
+  }
+  
+  body {
+    @apply bg-background text-foreground font-sans antialiased;
+  }
+  
+  /* Selection */
+  ::selection {
+    @apply bg-juai-green/20 text-juai-black;
+  }
+  
+  /* Scrollbar */
+  ::-webkit-scrollbar {
+    @apply w-2;
+  }
+  
+  ::-webkit-scrollbar-track {
+    @apply bg-transparent;
+  }
+  
+  ::-webkit-scrollbar-thumb {
+    @apply bg-juai-gray-300 rounded-full;
+  }
+  
+  ::-webkit-scrollbar-thumb:hover {
+    @apply bg-juai-gray-400;
+  }
+  
+  .dark ::-webkit-scrollbar-thumb {
+    @apply bg-juai-gray-700;
+  }
+  
+  .dark ::-webkit-scrollbar-thumb:hover {
+    @apply bg-juai-gray-600;
+  }
+}
+
+/* Component Styles */
+@layer components {
+  /* Juai Button Styles */
+  .btn-juai-primary {
+    @apply px-6 py-3 bg-juai-green text-white font-semibold rounded-xl
+           hover:bg-juai-green/90 active:scale-[0.98] transition-all duration-200
+           shadow-juai-md hover:shadow-juai-glow-green;
+  }
+  
+  .btn-juai-secondary {
+    @apply px-6 py-3 bg-juai-orange text-white font-semibold rounded-xl
+           hover:bg-juai-orange/90 active:scale-[0.98] transition-all duration-200
+           shadow-juai-md hover:shadow-juai-glow-orange;
+  }
+  
+  .btn-juai-outline {
+    @apply px-6 py-3 bg-transparent border-2 border-juai-black text-juai-black
+           font-semibold rounded-xl hover:bg-juai-black hover:text-white
+           active:scale-[0.98] transition-all duration-200;
+  }
+  
+  .btn-juai-ghost {
+    @apply px-6 py-3 bg-transparent text-juai-black font-medium rounded-xl
+           hover:bg-juai-gray-100 active:scale-[0.98] transition-all duration-200;
+  }
+  
+  /* Juai Card Styles */
+  .card-juai {
+    @apply bg-white rounded-2xl p-6 shadow-juai-md border border-juai-gray-100
+           hover:shadow-juai-lg transition-shadow duration-300;
+  }
+  
+  .card-juai-dark {
+    @apply bg-juai-night rounded-2xl p-6 shadow-juai-md border border-juai-gray-800
+           hover:shadow-juai-lg transition-shadow duration-300;
+  }
+  
+  /* Juai Input Styles */
+  .input-juai {
+    @apply w-full px-4 py-3 bg-juai-gray-50 border border-juai-gray-200 rounded-xl
+           text-juai-black placeholder:text-juai-gray-400
+           focus:outline-none focus:ring-2 focus:ring-juai-green/50 focus:border-juai-green
+           transition-all duration-200;
+  }
+  
+  .input-juai-dark {
+    @apply w-full px-4 py-3 bg-juai-gray-800 border border-juai-gray-700 rounded-xl
+           text-white placeholder:text-juai-gray-500
+           focus:outline-none focus:ring-2 focus:ring-juai-green/50 focus:border-juai-green
+           transition-all duration-200;
+  }
+  
+  /* Juai Badge Styles */
+  .badge-juai-green {
+    @apply inline-flex items-center px-3 py-1 bg-juai-green/10 text-juai-green
+           text-sm font-medium rounded-full;
+  }
+  
+  .badge-juai-orange {
+    @apply inline-flex items-center px-3 py-1 bg-juai-orange/10 text-juai-orange
+           text-sm font-medium rounded-full;
+  }
+  
+  /* Chat Message Styles */
+  .chat-message-user {
+    @apply bg-juai-green text-white rounded-2xl rounded-br-md px-4 py-3;
+  }
+  
+  .chat-message-assistant {
+    @apply bg-juai-gray-100 text-juai-black rounded-2xl rounded-bl-md px-4 py-3;
+  }
+  
+  /* Action Card Styles */
+  .action-card {
+    @apply bg-gradient-to-br from-white to-juai-gray-50 rounded-2xl p-5
+           border border-juai-gray-200 hover:border-juai-green/50
+           shadow-juai-sm hover:shadow-juai-lg
+           transition-all duration-300 cursor-pointer;
+  }
+  
+  .action-card-highlight {
+    @apply bg-gradient-to-br from-juai-green/5 to-juai-orange/5 rounded-2xl p-5
+           border-2 border-juai-green/30 hover:border-juai-green
+           shadow-juai-md hover:shadow-juai-glow-green
+           transition-all duration-300 cursor-pointer;
+  }
+}
+
+/* Utility Styles */
+@layer utilities {
+  /* Text Gradient */
+  .text-gradient-juai {
+    @apply bg-gradient-juai bg-clip-text text-transparent;
+  }
+  
+  /* Glassmorphism */
+  .glass {
+    @apply bg-white/80 backdrop-blur-lg border border-white/20;
+  }
+  
+  .glass-dark {
+    @apply bg-juai-black/80 backdrop-blur-lg border border-white/10;
+  }
+  
+  /* Hide Scrollbar */
+  .no-scrollbar::-webkit-scrollbar {
+    display: none;
+  }
+  
+  .no-scrollbar {
+    -ms-overflow-style: none;
+    scrollbar-width: none;
+  }
+  
+  /* Typing Animation */
+  .typing-indicator {
+    @apply flex items-center gap-1;
+  }
+  
+  .typing-indicator span {
+    @apply w-2 h-2 bg-juai-gray-400 rounded-full animate-bounce;
+  }
+  
+  .typing-indicator span:nth-child(2) {
+    animation-delay: 0.1s;
+  }
+  
+  .typing-indicator span:nth-child(3) {
+    animation-delay: 0.2s;
+  }
+  
+  /* Focus Ring */
+  .focus-ring {
+    @apply focus:outline-none focus:ring-2 focus:ring-juai-green focus:ring-offset-2;
+  }
+}
+
+/* Animation Keyframes */
+@keyframes float {
+  0%, 100% {
+    transform: translateY(0);
+  }
+  50% {
+    transform: translateY(-10px);
+  }
+}
+
+@keyframes shimmer {
+  0% {
+    transform: translateX(-100%);
+  }
+  100% {
+    transform: translateX(100%);
+  }
+}
+
+.animate-float {
+  animation: float 3s ease-in-out infinite;
+}
+
+.animate-shimmer {
+  animation: shimmer 2s infinite;
+}
+
+/* Skeleton Loading */
+.skeleton {
+  @apply bg-juai-gray-200 animate-pulse rounded;
+}
+
+.skeleton-text {
+  @apply h-4 bg-juai-gray-200 animate-pulse rounded;
+}
+
+.skeleton-avatar {
+  @apply w-10 h-10 bg-juai-gray-200 animate-pulse rounded-full;
+}
