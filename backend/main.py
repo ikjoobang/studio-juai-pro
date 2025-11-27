@@ -660,10 +660,15 @@ async def generate_video(request: VideoGenerateRequest, background_tasks: Backgr
         print(f"📸 [IMAGE-TO-VIDEO] 소스 이미지 감지됨")
         print(f"   이미지 URL: {source_image[:80]}...")
         
-        # Image-to-Video 시 Veo 추천 (물리적 움직임에 강함)
-        if video_model not in [VideoModel.VEO, VideoModel.KLING]:
-            print(f"⚠️ [I2V] {video_model.value}는 I2V 미지원 → Veo로 변경")
-            video_model = VideoModel.VEO
+        # ✅ 2024-11-27 GoAPI 테스트 결과:
+        # - Veo3.1: image_to_video task_type 미지원 (400 에러)
+        # - Kling: video_generation + image_url 파라미터로 I2V 지원 ✅
+        # - Sora2: I2V 미지원 (text-to-video only)
+        
+        # Image-to-Video는 반드시 Kling 사용
+        if video_model != VideoModel.KLING:
+            print(f"⚠️ [I2V] {video_model.value}는 I2V 미지원 → Kling으로 변경")
+            video_model = VideoModel.KLING
     
     # VideoRequest 생성
     video_request = VideoRequest(

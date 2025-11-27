@@ -338,9 +338,17 @@ class GoAPIClient:
         VideoModel.MIDJOURNEY: {"task_type": "image_generation", "model": "midjourney"},
     }
     
-    # Image-to-Video 지원 모델 (이미지 제공 시 task_type 변경)
-    IMAGE_TO_VIDEO_CONFIG = {
-        VideoModel.VEO: {"task_type": "image_to_video", "model": "veo3.1"},       # Veo3.1 - image_to_video (이미지 필요)
+    # Image-to-Video 지원 모델 설정
+    # ✅ 2024-11-27 테스트 결과:
+    # - Veo3.1: image_to_video task_type 미지원 (GoAPI 400 에러)
+    # - Kling: video_generation + image_url 파라미터로 I2V 지원 ✅
+    # - Sora2: I2V 미지원 (text-to-video only)
+    IMAGE_TO_VIDEO_SUPPORTED = {
+        VideoModel.KLING: True,   # ✅ video_generation + image_url
+        VideoModel.VEO: False,    # ❌ GoAPI에서 image_to_video 미지원
+        VideoModel.SORA: False,   # ❌ text-to-video only
+        VideoModel.HAILUO: True,  # 미검증 (video_generation + image_url 추정)
+        VideoModel.LUMA: True,    # 미검증 (video_generation + image_url 추정)
     }
     
     def __init__(self):
@@ -388,40 +396,38 @@ class GoAPIClient:
         print(f"   모델: {request.model.value}")
         
         # ============================================
-        # Veo3.1 Smart Switching
+        # Veo3.1 (Text-to-Video ONLY)
+        # ❌ GoAPI Veo3.1은 image_to_video task_type 미지원 (2024-11-27 확인)
         # ============================================
         if request.model == VideoModel.VEO:
             if is_image_to_video:
-                # Image-to-Video: task_type = "image_to_video"
-                print("📸 [Veo3.1] Image-to-Video 모드 활성화")
-                i2v_config = self.IMAGE_TO_VIDEO_CONFIG.get(VideoModel.VEO, config)
-                body["model"] = i2v_config["model"]
-                body["task_type"] = i2v_config["task_type"]
-                body["input"]["image_url"] = request.image_url
-                body["input"]["aspect_ratio"] = request.aspect_ratio.value
-                body["input"]["duration"] = f"{request.duration}s"
-            else:
-                # Text-to-Video: task_type = "veo3.1-video"
-                print("✏️ [Veo3.1] Text-to-Video 모드 활성화 (veo3.1-video)")
-                # veo3.1-video는 aspect_ratio, duration, resolution 파라미터 지원
-                body["input"]["aspect_ratio"] = request.aspect_ratio.value
-                body["input"]["duration"] = f"{request.duration}s"
-                body["input"]["resolution"] = "720p"
+                # Veo3.1은 I2V 미지원 - 이미지 무시하고 T2V로 진행
+                print("⚠️ [Veo3.1] Image-to-Video 미지원 - Kling 사용 권장!")
+                print("   이미지를 무시하고 Text-to-Video로 진행합니다.")
+            
+            # Text-to-Video: task_type = "veo3.1-video"
+            print("✏️ [Veo3.1] Text-to-Video 모드 (veo3.1-video)")
+            body["input"]["aspect_ratio"] = request.aspect_ratio.value
+            body["input"]["duration"] = f"{request.duration}s"  # Veo는 string ("5s")
+            body["input"]["resolution"] = "720p"
         
         # ============================================
-        # Kling Smart Switching
+        # Kling Smart Switching (I2V 지원 ✅)
+        # ✅ GoAPI Kling: video_generation + image_url 파라미터로 I2V 작동
+        # ⚠️ duration은 반드시 INTEGER (문자열 금지!)
         # ============================================
         elif request.model == VideoModel.KLING:
             if is_image_to_video:
-                # Kling Image-to-Video
+                # Kling Image-to-Video: video_generation + image_url
                 print("📸 [Kling] Image-to-Video 모드 활성화")
+                print(f"   source_image: {request.image_url}")
                 body["input"]["image_url"] = request.image_url
             else:
                 print("✏️ [Kling] Text-to-Video 모드 활성화")
             
-            # Kling 공통 파라미터
+            # Kling 공통 파라미터 - duration은 INTEGER!
             body["input"]["aspect_ratio"] = request.aspect_ratio.value
-            body["input"]["duration"] = request.duration
+            body["input"]["duration"] = int(request.duration)  # ⚠️ int 필수!
         
         # ============================================
         # Sora2 (Text-to-Video only)
