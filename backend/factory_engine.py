@@ -251,12 +251,12 @@ class KlingOfficialClient:
         if is_image_to_video:
             path = "/v1/videos/image2video"
             body = {
-                "model_name": "kling-v1-5",  # 또는 kling-v1
+                "model_name": "kling-v1",  # I2V는 kling-v1 사용
                 "image": request.image_url,
                 "prompt": enhanced_prompt,
                 "negative_prompt": request.negative_prompt or "blurry, low quality, distorted, watermark",
                 "cfg_scale": 0.5,
-                "mode": "std",  # std 또는 pro
+                "mode": "std",
                 "duration": str(request.duration),  # "5" 또는 "10"
                 "aspect_ratio": request.aspect_ratio.value
             }
@@ -265,7 +265,7 @@ class KlingOfficialClient:
         else:
             path = "/v1/videos/text2video"
             body = {
-                "model_name": "kling-v1-5",
+                "model_name": "kling-v1",  # T2V도 kling-v1 + std 모드 사용 (안정적)
                 "prompt": enhanced_prompt,
                 "negative_prompt": request.negative_prompt or "blurry, low quality, distorted, watermark",
                 "cfg_scale": 0.5,
