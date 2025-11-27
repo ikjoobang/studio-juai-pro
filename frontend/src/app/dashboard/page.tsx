@@ -903,27 +903,22 @@ export default function DashboardPage() {
             <ResizablePanel defaultSize={50} minSize={30}>
               <div className="h-full bg-[#0a0a0a] flex flex-col">
                 {/* Video Container */}
+                {/* Video Container - 동적 비율 적용 */}
                 <div className="flex-1 flex items-center justify-center p-2">
                   <div
                     className={cn(
-                      "relative bg-black rounded-lg overflow-hidden w-full h-full flex items-center justify-center",
+                      "relative bg-black rounded-lg overflow-hidden flex items-center justify-center",
+                      // 비율에 따른 컨테이너 크기 조정
                       selectedRatio === "9:16"
-                        ? "max-w-[280px]"
+                        ? "h-full max-h-[500px] aspect-[9/16]"
                         : selectedRatio === "1:1"
-                          ? "max-w-[400px]"
-                          : "max-w-full"
+                          ? "h-full max-h-[450px] aspect-square"
+                          : "w-full max-w-full aspect-video"
                     )}
                   >
                     <video
                       ref={videoRef}
-                      className={cn(
-                        "object-contain rounded-lg",
-                        selectedRatio === "9:16"
-                          ? "aspect-[9/16] h-full max-h-[500px]"
-                          : selectedRatio === "1:1"
-                            ? "aspect-square h-full max-h-[400px]"
-                            : "aspect-video w-full max-w-full"
-                      )}
+                      className="w-full h-full object-contain bg-black rounded-lg"
                       onTimeUpdate={handleTimeUpdate}
                       onLoadedMetadata={handleLoadedMetadata}
                       onEnded={() => setIsPlaying(false)}
@@ -952,16 +947,9 @@ export default function DashboardPage() {
                       </div>
                     )}
 
-                    {/* No Video Placeholder */}
+                    {/* No Video Placeholder - 동적 비율 적용 */}
                     {!videoRef.current?.src && !generationStatus.isGenerating && (
-                      <div className={cn(
-                        "bg-black rounded-lg flex flex-col items-center justify-center text-gray-500",
-                        selectedRatio === "9:16"
-                          ? "aspect-[9/16] h-full max-h-[500px]"
-                          : selectedRatio === "1:1"
-                            ? "aspect-square h-full max-h-[400px]"
-                            : "aspect-video w-full"
-                      )}>
+                      <div className="absolute inset-0 bg-black rounded-lg flex flex-col items-center justify-center text-gray-500">
                         <Film className="w-16 h-16 mb-4" />
                         <p className="text-center px-4">프롬프트를 입력하고 영상을 생성하세요</p>
                       </div>

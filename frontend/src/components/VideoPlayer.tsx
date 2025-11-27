@@ -156,14 +156,28 @@ export default function VideoPlayer({ className = "", compact = false }: VideoPl
     }
   };
 
+  // 동적 비율 계산 (Dynamic Aspect Ratio)
+  const getAspectRatioClass = () => {
+    const ratio = currentProject?.aspectRatio || "16:9";
+    switch (ratio) {
+      case "9:16":
+        return "aspect-[9/16]"; // 세로 영상
+      case "1:1":
+        return "aspect-square"; // 정사각형
+      case "16:9":
+      default:
+        return "aspect-video"; // 기본 가로 영상
+    }
+  };
+
   return (
     <div
       className={`relative bg-[#0d0d0d] rounded-lg overflow-hidden ${className}`}
       onMouseMove={handleMouseMove}
       onMouseLeave={() => isPlaying && setShowControls(false)}
     >
-      {/* Video Container */}
-      <div className="flex items-center justify-center h-full bg-black">
+      {/* Video Container - 동적 비율 적용 */}
+      <div className={`flex items-center justify-center h-full bg-black ${getAspectRatioClass()}`}>
         
         {/* Rendering Progress Overlay */}
         <AnimatePresence>
@@ -238,12 +252,12 @@ export default function VideoPlayer({ className = "", compact = false }: VideoPl
           </div>
         )}
 
-        {/* Video Element */}
+        {/* Video Element - object-contain으로 영상이 잘리지 않고 온전하게 표시 */}
         {videoUrl && (
           <video
             ref={videoRef}
             src={videoUrl}
-            className="max-h-full max-w-full object-contain"
+            className="w-full h-full object-contain bg-black"
             playsInline
             onClick={togglePlay}
           />
