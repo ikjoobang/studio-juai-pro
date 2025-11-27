@@ -1088,19 +1088,70 @@ export default function DashboardPage() {
                                     key={idx}
                                     variant="outline"
                                     size="sm"
-                                    className="w-full justify-start border-[#333] hover:bg-[#333]"
-                                    onClick={() => {
+                                    className="w-full justify-start border-[#333] hover:bg-[#333] text-[#03C75A] font-semibold"
+                                    onClick={async () => {
+                                      // 1. 프롬프트와 모델 설정
+                                      const newPrompt = card.params?.prompt as string || prompt;
+                                      const newModel = card.params?.model as string || selectedModel;
+                                      
                                       if (card.params?.prompt) {
-                                        setPrompt(card.params.prompt as string);
+                                        setPrompt(newPrompt);
                                       }
                                       if (card.params?.model) {
-                                        setSelectedModel(
-                                          card.params.model as string
-                                        );
+                                        setSelectedModel(newModel);
+                                      }
+                                      
+                                      // 2. 즉시 영상 생성 시작
+                                      if (card.type === "video_generate" && newPrompt) {
+                                        toast.loading(`🎬 ${newModel.toUpperCase()} 영상 생성 시작...`, { id: "action-card" });
+                                        
+                                        setGenerationStatus({
+                                          isGenerating: true,
+                                          progress: 0,
+                                          message: `${newModel.toUpperCase()} 영상 생성 요청 중...`,
+                                        });
+                                        
+                                        const projectId = currentProject?.id || `project_${Date.now()}`;
+                                        
+                                        try {
+                                          const response = await fetch(`${API_BASE_URL}/api/video/generate`, {
+                                            method: "POST",
+                                            headers: { "Content-Type": "application/json" },
+                                            body: JSON.stringify({
+                                              project_id: projectId,
+                                              prompt: newPrompt,
+                                              model: newModel,
+                                              aspect_ratio: selectedRatio,
+                                              duration: 5,
+                                              style_preset: card.params?.style_preset || selectedPreset,
+                                            }),
+                                          });
+                                          
+                                          if (!response.ok) {
+                                            throw new Error("영상 생성 요청 실패");
+                                          }
+                                          
+                                          const data = await response.json();
+                                          console.log("✅ [Action Card] 영상 생성 시작:", data);
+                                          
+                                          toast.loading(`🎬 ${newModel.toUpperCase()} 생성 중...`, { id: "action-card" });
+                                          
+                                          // 폴링 시작
+                                          await pollVideoProgress(projectId);
+                                        } catch (err) {
+                                          console.error("❌ [Action Card] 오류:", err);
+                                          toast.error("영상 생성 실패", { id: "action-card" });
+                                          setGenerationStatus({
+                                            isGenerating: false,
+                                            progress: 0,
+                                            message: "",
+                                            error: "영상 생성 실패",
+                                          });
+                                        }
                                       }
                                     }}
                                   >
-                                    <ChevronRight className="w-3 h-3 mr-2" />
+                                    <Sparkles className="w-3 h-3 mr-2" />
                                     {card.title}
                                   </Button>
                                 ))}
