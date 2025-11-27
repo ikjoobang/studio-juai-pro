@@ -44,6 +44,7 @@ import {
   CheckCircle,
   Loader2,
   Download,
+  Upload,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import toast, { Toaster } from "react-hot-toast";
@@ -235,6 +236,12 @@ export default function DashboardPage() {
   // Generation Mode (video/image)
   const [generationMode, setGenerationMode] = useState<"video" | "image">("video");
 
+  // Image Upload State (for I2V - Image to Video)
+  const [uploadedImageUrl, setUploadedImageUrl] = useState<string | null>(null);
+  const [uploadedImagePreview, setUploadedImagePreview] = useState<string | null>(null);
+  const [isUploading, setIsUploading] = useState(false);
+  const imageInputRef = useRef<HTMLInputElement>(null);
+
   // Audio Player Ref (for BGM)
   const audioRef = useRef<HTMLAudioElement>(null);
 
@@ -404,7 +411,8 @@ export default function DashboardPage() {
           duration: 5,
           style_preset: selectedPreset,
           use_director: selectedModel === "auto",
-          source_image_url: sourceImageUrl || null,
+          source_image_url: uploadedImageUrl || sourceImageUrl || null,
+          image_url: uploadedImageUrl || null,
         }),
       });
 
@@ -1085,6 +1093,129 @@ export default function DashboardPage() {
                           />
                         </div>
 
+                        {/* Image Upload Box for Kling I2V */}
+                        <div className="mb-4">
+                          <label className="text-xs text-gray-500 mb-1 block flex items-center gap-2">
+                            📷 이미지 업로드 (I2V)
+                            <span className="text-[10px] px-1.5 py-0.5 bg-blue-500/20 text-blue-400 rounded">
+                              Kling 전용
+                            </span>
+                          </label>
+                          <input
+                            type="file"
+                            ref={imageInputRef}
+                            accept="image/*"
+                            className="hidden"
+                            onChange={async (e) => {
+                              const file = e.target.files?.[0];
+                              if (!file) return;
+                              
+                              // Create preview
+                              const reader = new FileReader();
+                              reader.onload = (event) => {
+                                setUploadedImagePreview(event.target?.result as string);
+                              };
+                              reader.readAsDataURL(file);
+                              
+                              // Upload to server
+                              setIsUploading(true);
+                              try {
+                                const formData = new FormData();
+                                formData.append("file", file);
+                                
+                                const res = await fetch(`${API_BASE_URL}/api/upload`, {
+                                  method: "POST",
+                                  body: formData,
+                                });
+                                
+                                if (res.ok) {
+                                  const data = await res.json();
+                                  setUploadedImageUrl(data.url);
+                                  toast.success("📷 이미지 업로드 완료! Kling I2V에 사용됩니다.");
+                                  // Auto-select Kling model for I2V
+                                  setSelectedModel("kling");
+                                } else {
+                                  toast.error("이미지 업로드 실패");
+                                }
+                              } catch (err) {
+                                toast.error("이미지 업로드 오류");
+                              } finally {
+                                setIsUploading(false);
+                              }
+                            }}
+                          />
+                          <div
+                            className={`border-2 border-dashed rounded-lg p-4 text-center cursor-pointer transition-all
+                              ${uploadedImagePreview 
+                                ? "border-[#03C75A] bg-[#03C75A]/10" 
+                                : "border-[#333] hover:border-[#555] bg-[#0a0a0a]"
+                              }
+                              ${isUploading ? "opacity-50 pointer-events-none" : ""}
+                            `}
+                            onClick={() => imageInputRef.current?.click()}
+                            onDragOver={(e) => {
+                              e.preventDefault();
+                              e.currentTarget.classList.add("border-[#03C75A]");
+                            }}
+                            onDragLeave={(e) => {
+                              e.currentTarget.classList.remove("border-[#03C75A]");
+                            }}
+                            onDrop={async (e) => {
+                              e.preventDefault();
+                              e.currentTarget.classList.remove("border-[#03C75A]");
+                              const file = e.dataTransfer.files?.[0];
+                              if (file && file.type.startsWith("image/")) {
+                                // Trigger the same upload logic
+                                const dataTransfer = new DataTransfer();
+                                dataTransfer.items.add(file);
+                                if (imageInputRef.current) {
+                                  imageInputRef.current.files = dataTransfer.files;
+                                  imageInputRef.current.dispatchEvent(new Event("change", { bubbles: true }));
+                                }
+                              }
+                            }}
+                          >
+                            {isUploading ? (
+                              <div className="flex flex-col items-center gap-2 py-2">
+                                <Loader2 className="w-6 h-6 animate-spin text-[#03C75A]" />
+                                <span className="text-xs text-gray-400">업로드 중...</span>
+                              </div>
+                            ) : uploadedImagePreview ? (
+                              <div className="relative">
+                                <img
+                                  src={uploadedImagePreview}
+                                  alt="Uploaded"
+                                  className="max-h-24 mx-auto rounded"
+                                />
+                                <button
+                                  className="absolute top-0 right-0 bg-red-500 text-white rounded-full p-1 text-xs transform translate-x-1/2 -translate-y-1/2"
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    setUploadedImageUrl(null);
+                                    setUploadedImagePreview(null);
+                                    if (imageInputRef.current) {
+                                      imageInputRef.current.value = "";
+                                    }
+                                  }}
+                                >
+                                  ✕
+                                </button>
+                                <p className="text-xs text-[#03C75A] mt-2">✓ Kling I2V 준비됨</p>
+                              </div>
+                            ) : (
+                              <div className="flex flex-col items-center gap-2 py-2">
+                                <Upload className="w-6 h-6 text-gray-500" />
+                                <span className="text-xs text-gray-400">
+                                  클릭 또는 드래그하여 이미지 업로드
+                                </span>
+                                <span className="text-[10px] text-gray-500">
+                                  이미지를 업로드하면 자동으로 Kling I2V 모드로 전환됩니다
+                                </span>
+                              </div>
+                            )}
+                          </div>
+                        </div>
+
                         {/* Model Selection - VIDEO ONLY (Stability Mode) */}
                         <div className="mb-4">
                           <label className="text-xs text-gray-500 mb-1 block flex items-center gap-2">
@@ -1321,26 +1452,39 @@ export default function DashboardPage() {
                       <Button
                         variant="outline"
                         size="sm"
-                        className="border-[#333] text-gray-500 cursor-not-allowed opacity-50"
-                        disabled={true}
-                        title="현재 AI 공급사(GoAPI) 음악 서버 점검 중입니다."
-                        onClick={() => {
-                          toast.error("🛠️ 현재 AI 공급사(GoAPI) 음악 서버 점검 중입니다. 잠시 후 다시 시도해주세요.");
+                        className="border-[#333] hover:bg-[#333] text-gray-300"
+                        onClick={async () => {
+                          toast.loading("🎵 음악 생성 중...", { id: "music" });
+                          try {
+                            const res = await fetch(`${API_BASE_URL}/api/music/generate`, {
+                              method: "POST",
+                              headers: { "Content-Type": "application/json" },
+                              body: JSON.stringify({
+                                project_id: currentProject?.id || `project_${Date.now()}`,
+                                prompt: "cinematic background music",
+                                style: "epic",
+                                duration: 30,
+                              }),
+                            });
+                            const data = await res.json();
+                            if (res.ok && data.success) {
+                              toast.success("🎵 음악 생성이 시작되었습니다!", { id: "music" });
+                            } else {
+                              toast.error(data.detail || data.error || "음악 생성 실패. 잠시 후 다시 시도해주세요.", { id: "music" });
+                            }
+                          } catch (err) {
+                            toast.error("음악 생성 API 오류. 서비스 상태를 확인해주세요.", { id: "music" });
+                          }
                         }}
                       >
                         <Music className="w-3 h-3 mr-1" />
-                        🎵 점검중
+                        🎵 음악 추가
                       </Button>
                       <Button
                         variant="outline"
                         size="sm"
                         className="border-[#333] hover:bg-[#333] text-gray-300"
-                        disabled={!canExport}
                         onClick={async () => {
-                          if (!exportVideoUrl) {
-                            toast.error("먼저 영상을 생성해주세요");
-                            return;
-                          }
                           const text = window.prompt("자막 텍스트를 입력하세요:");
                           if (!text) return;
                           
@@ -1378,7 +1522,7 @@ export default function DashboardPage() {
                         }}
                       >
                         <Type className="w-3 h-3 mr-1" />
-                        📝 자막
+                        📝 자막 추가
                       </Button>
                     </div>
                   </div>
