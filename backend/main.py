@@ -26,6 +26,14 @@ from enum import Enum
 from dotenv import load_dotenv
 from supabase import create_client, Client
 
+# Google Gemini AI
+try:
+    import google.generativeai as genai
+    GEMINI_AVAILABLE = True
+except ImportError:
+    GEMINI_AVAILABLE = False
+    print("⚠️ [Gemini] google-generativeai 패키지 없음")
+
 from factory_engine import (
     FactoryEngine, GoAPIClient, CreatomateClient, HeyGenClient,
     VideoRequest, VideoResponse, VideoModel, AspectRatio,
@@ -1512,6 +1520,176 @@ async def delete_prompt_template(template_id: str):
         "success": True,
         "message": "템플릿이 삭제되었습니다."
     }
+
+
+# ============================================
+# Admin CMS - AI Auto-Generate Templates
+# ============================================
+
+class AutoGenerateRequest(BaseModel):
+    """AI 템플릿 자동 생성 요청"""
+    category: str = Field(..., description="카테고리 (fashion, beauty, tech, food, travel 등)")
+    count: int = Field(default=3, ge=1, le=10, description="생성할 템플릿 개수 (1-10)")
+    language: str = Field(default="ko", description="언어 (ko, en)")
+
+
+@app.post("/api/admin/templates/auto-generate")
+async def auto_generate_templates(request: AutoGenerateRequest):
+    """
+    Gemini를 활용한 프롬프트 템플릿 자동 생성
+    
+    - Gemini Pro에게 고품질 비디오 프롬프트 템플릿 생성 요청
+    - 생성된 템플릿을 prompt_templates_store에 Bulk Insert
+    """
+    
+    # Gemini API 키 확인
+    gemini_api_key = os.getenv("GOOGLE_GEMINI_API_KEY")
+    if not gemini_api_key:
+        raise HTTPException(
+            status_code=503, 
+            detail="Gemini API 키가 설정되지 않았습니다. GOOGLE_GEMINI_API_KEY 환경변수를 확인하세요."
+        )
+    
+    if not GEMINI_AVAILABLE:
+        raise HTTPException(
+            status_code=503, 
+            detail="google-generativeai 패키지가 설치되지 않았습니다."
+        )
+    
+    # 카테고리별 한글 이름 매핑
+    category_names = {
+        "fashion": "패션/의류",
+        "beauty": "뷰티/화장품",
+        "tech": "테크/전자제품",
+        "food": "음식/F&B",
+        "travel": "여행/관광",
+        "lifestyle": "라이프스타일",
+        "education": "교육/강의",
+        "sports": "스포츠/피트니스",
+        "real_estate": "부동산/인테리어",
+        "automotive": "자동차"
+    }
+    
+    category_name_ko = category_names.get(request.category, request.category)
+    
+    # Gemini 프롬프트 엔지니어링
+    system_prompt = f"""You are an expert AI video prompt engineer specializing in Kling AI and Veo video generation.
+
+Your task: Create {request.count} unique, high-quality video prompt templates for the "{request.category}" ({category_name_ko}) industry.
+
+REQUIREMENTS:
+1. Each template MUST include these quality keywords: "High quality", "4K", "Cinematic lighting", "Professional"
+2. Use dynamic variables like {{product_name}}, {{brand_name}}, {{scene_description}}, {{color}}, {{style}}
+3. Write prompts in English that Kling AI and Google Veo understand well
+4. Include camera movements: "smooth camera movement", "slow zoom", "tracking shot", "dolly shot"
+5. Specify atmosphere: "warm lighting", "soft shadows", "golden hour", "studio lighting"
+6. Add style hints: "commercial style", "luxury feel", "minimalist aesthetic", "vibrant colors"
+
+RESPONSE FORMAT (JSON only, no markdown):
+{{
+  "templates": [
+    {{
+      "id": "unique_id_here",
+      "name": "템플릿 이름 (한국어)",
+      "name_en": "Template Name (English)",
+      "category": "{request.category}",
+      "system_instruction": "이 템플릿의 용도와 특징 설명 (한국어, 2-3문장)",
+      "prompt_template": "The actual English prompt with {{variables}}. High quality, 4K, cinematic...",
+      "default_model": "kling",
+      "default_style": "cinematic_teal_orange",
+      "variables": ["product_name", "brand_name"],
+      "tags": ["commercial", "product", "luxury"]
+    }}
+  ]
+}}
+
+Generate exactly {request.count} diverse templates now:"""
+
+    try:
+        # Gemini API 호출
+        genai.configure(api_key=gemini_api_key)
+        model = genai.GenerativeModel('gemini-1.5-pro')
+        
+        print(f"🤖 [Gemini] 템플릿 자동 생성 요청: category={request.category}, count={request.count}")
+        
+        response = model.generate_content(
+            system_prompt,
+            generation_config=genai.types.GenerationConfig(
+                temperature=0.8,
+                max_output_tokens=4096,
+            )
+        )
+        
+        # 응답 파싱
+        response_text = response.text.strip()
+        
+        # JSON 추출 (마크다운 코드 블록 제거)
+        if response_text.startswith("```"):
+            # ```json ... ``` 형태 처리
+            lines = response_text.split("\n")
+            json_lines = []
+            in_json = False
+            for line in lines:
+                if line.startswith("```json") or line.startswith("```"):
+                    in_json = not in_json
+                    continue
+                if in_json or (not line.startswith("```")):
+                    json_lines.append(line)
+            response_text = "\n".join(json_lines).strip()
+        
+        # JSON 파싱
+        try:
+            data = json.loads(response_text)
+            templates = data.get("templates", [])
+        except json.JSONDecodeError as e:
+            print(f"❌ [Gemini] JSON 파싱 실패: {e}")
+            print(f"응답 원본: {response_text[:500]}...")
+            raise HTTPException(
+                status_code=500, 
+                detail=f"Gemini 응답 파싱 실패: {str(e)}"
+            )
+        
+        # 템플릿 저장
+        saved_templates = []
+        for template in templates:
+            template_id = template.get("id", f"{request.category}_{uuid.uuid4().hex[:8]}")
+            
+            # 중복 ID 방지
+            if template_id in prompt_templates_store:
+                template_id = f"{template_id}_{uuid.uuid4().hex[:4]}"
+            
+            new_template = {
+                "id": template_id,
+                "name": template.get("name", f"{category_name_ko} 템플릿"),
+                "category": request.category,
+                "system_instruction": template.get("system_instruction", "AI가 생성한 템플릿입니다."),
+                "prompt_template": template.get("prompt_template", ""),
+                "default_model": template.get("default_model", "kling"),
+                "default_style": template.get("default_style", "cinematic_teal_orange"),
+                "variables": template.get("variables", []),
+                "tags": template.get("tags", []),
+                "auto_generated": True,
+                "updated_at": datetime.utcnow().isoformat()
+            }
+            
+            prompt_templates_store[template_id] = new_template
+            saved_templates.append(new_template)
+            print(f"✅ [Admin] AI 생성 템플릿 저장: {template_id}")
+        
+        return {
+            "success": True,
+            "message": f"{len(saved_templates)}개의 템플릿이 자동 생성되었습니다.",
+            "category": request.category,
+            "count": len(saved_templates),
+            "templates": saved_templates
+        }
+        
+    except Exception as e:
+        print(f"❌ [Gemini] 템플릿 생성 실패: {str(e)}")
+        raise HTTPException(
+            status_code=500, 
+            detail=f"템플릿 자동 생성 실패: {str(e)}"
+        )
 
 
 # ============================================
