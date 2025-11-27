@@ -152,7 +152,8 @@ export default function Dashboard() {
   }, [currentProject, isGenerating, startRender, failRender]);
 
   const pollVideoProgress = async (projectId: string) => {
-    const maxAttempts = 60;
+    // ⏱️ Kling 영상 생성은 2-5분 소요 → 최대 5분(300초) 대기
+    const maxAttempts = 300;
     let attempts = 0;
 
     while (attempts < maxAttempts) {
@@ -161,7 +162,11 @@ export default function Dashboard() {
         if (!response.ok) throw new Error("진행률 조회 실패");
 
         const data = await response.json();
-        updateRenderProgress(data.progress, data.message);
+        
+        // 진행률 메시지 업데이트 (남은 시간 표시)
+        const remainingTime = Math.ceil((maxAttempts - attempts) / 60);
+        const progressMsg = data.message || `생성 중... (최대 ${remainingTime}분 남음)`;
+        updateRenderProgress(data.progress, progressMsg);
 
         if (data.status === "completed" && data.video_url) {
           completeRender(data.video_url);
@@ -174,15 +179,19 @@ export default function Dashboard() {
           return;
         }
 
-        if (data.status === "failed") throw new Error(data.message || "영상 생성 실패");
+        if (data.status === "failed") {
+          const errorMsg = data.message || "영상 생성 실패";
+          throw new Error(errorMsg);
+        }
 
-        await new Promise((r) => setTimeout(r, 1000));
-        attempts++;
+        // 2초마다 폴링 (서버 부하 감소)
+        await new Promise((r) => setTimeout(r, 2000));
+        attempts += 2;
       } catch (error) {
         throw error;
       }
     }
-    throw new Error("영상 생성 시간 초과");
+    throw new Error("영상 생성 시간 초과 (5분 경과). GoAPI 서버가 느릴 수 있습니다.");
   };
 
   const addVideoToTimeline = (videoUrl: string, duration: number) => {
