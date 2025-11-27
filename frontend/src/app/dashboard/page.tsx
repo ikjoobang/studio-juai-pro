@@ -379,16 +379,17 @@ export default function DashboardPage() {
       console.log("✅ [API] 응답 데이터:", data);
 
       // Show routing info if using Director
-      if (data.routing_info) {
-        const modelName = data.routing_info.selected_model.toUpperCase();
+      if (data.routing_info?.selected_model) {
+        const modelName = (data.routing_info.selected_model || "AI").toUpperCase();
+        const confidence = data.routing_info.confidence ?? 0;
         toast.loading(`🧠 AI Director: ${modelName} 선택됨`, { id: "generating" });
         setGenerationStatus({
           isGenerating: true,
           progress: 10,
-          message: `🧠 AI Director: ${modelName} 선택 (${Math.round(data.routing_info.confidence * 100)}% 신뢰도)`,
+          message: `🧠 AI Director: ${modelName} 선택 (${Math.round(confidence * 100)}% 신뢰도)`,
         });
       } else {
-        toast.loading(`🎬 ${selectedModel.toUpperCase()}로 생성 중...`, { id: "generating" });
+        toast.loading(`🎬 ${(selectedModel || "AI").toUpperCase()}로 생성 중...`, { id: "generating" });
       }
 
       // Start polling
@@ -1059,14 +1060,14 @@ export default function DashboardPage() {
                             </p>
 
                             {/* Routing Info */}
-                            {msg.routingInfo && (
+                            {msg.routingInfo?.selected_model && (
                               <div className="mt-3 pt-3 border-t border-[#333]">
                                 <div className="flex items-center gap-2 text-xs text-gray-400">
                                   <Zap className="w-3 h-3" />
                                   <span>
-                                    {msg.routingInfo.selected_model.toUpperCase()}{" "}
+                                    {(msg.routingInfo.selected_model || "AI").toUpperCase()}{" "}
                                     선택됨 (
-                                    {Math.round(msg.routingInfo.confidence * 100)}
+                                    {Math.round((msg.routingInfo.confidence ?? 0) * 100)}
                                     % 신뢰도)
                                   </span>
                                 </div>
