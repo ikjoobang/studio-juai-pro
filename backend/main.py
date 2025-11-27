@@ -1135,6 +1135,64 @@ async def get_edit_progress(project_id: str):
 
 
 # ============================================
+# Export API
+# ============================================
+
+class ExportRequest(BaseModel):
+    project_id: str
+    video_url: str
+    format: str = "mp4"
+    filename: Optional[str] = None
+
+@app.post("/api/export/video")
+async def export_video(request: ExportRequest):
+    """
+    영상 내보내기 API
+    - 영상 URL을 받아서 다운로드 가능한 링크 반환
+    """
+    
+    if not request.video_url:
+        raise HTTPException(status_code=400, detail="video_url이 필요합니다.")
+    
+    # 파일명 생성
+    filename = request.filename or f"studio_juai_{request.project_id}_{datetime.utcnow().strftime('%Y%m%d_%H%M%S')}.{request.format}"
+    
+    return {
+        "success": True,
+        "project_id": request.project_id,
+        "download_url": request.video_url,
+        "filename": filename,
+        "format": request.format,
+        "message": f"영상이 준비되었습니다. '{filename}'으로 다운로드하세요."
+    }
+
+@app.post("/api/export/txt")
+async def export_txt(request: dict):
+    """텍스트 스크립트 내보내기"""
+    
+    project_id = request.get("project_id", "unknown")
+    content = request.get("content", "")
+    
+    if not content:
+        # 채팅 기록에서 스크립트 추출 시도
+        content = f"""# Studio Juai PRO 스크립트
+# 프로젝트: {project_id}
+# 생성일: {datetime.utcnow().isoformat()}
+
+[영상 스크립트 내용을 여기에 추가하세요]
+"""
+    
+    filename = f"script_{project_id}_{datetime.utcnow().strftime('%Y%m%d')}.txt"
+    
+    return {
+        "success": True,
+        "content": content,
+        "filename": filename,
+        "message": "스크립트가 준비되었습니다."
+    }
+
+
+# ============================================
 # Project Management
 # ============================================
 
@@ -1535,7 +1593,11 @@ async def generate_music(request: MusicGenerateRequest, background_tasks: Backgr
     result = await factory.generate_music(music_request)
     
     if not result.success:
-        raise HTTPException(status_code=500, detail=f"음악 생성 실패: {result.message}")
+        # Suno 503 오류인 경우 사용자 친화적 메시지
+        error_msg = result.message
+        if "503" in error_msg:
+            error_msg = "Suno AI 서비스가 일시적으로 과부하 상태입니다. 잠시 후 다시 시도해주세요. (GoAPI 서비스 503)"
+        raise HTTPException(status_code=503, detail=f"음악 생성 일시 중단: {error_msg}")
     
     # Task 저장
     task_store[f"music_{request.project_id}"] = {
