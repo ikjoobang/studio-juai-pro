@@ -782,6 +782,153 @@ async def get_video_progress(project_id: str):
 
 
 # ============================================
+# Factory Status (Unified Task Status)
+# ============================================
+
+class FactoryStatusResponse(BaseModel):
+    """통합 작업 상태 응답"""
+    success: bool
+    task_id: str
+    task_type: str  # video, music, avatar, edit
+    status: str  # pending, processing, completed, failed
+    progress: int  # 0-100
+    message: str
+    # 결과물 URLs
+    video_url: Optional[str] = None
+    audio_url: Optional[str] = None
+    thumbnail_url: Optional[str] = None
+    # 메타 정보
+    model: Optional[str] = None
+    duration: Optional[float] = None
+    created_at: Optional[str] = None
+    completed_at: Optional[str] = None
+
+
+@app.get("/api/factory/status/{task_id}", response_model=FactoryStatusResponse)
+async def get_factory_status(task_id: str):
+    """
+    🏭 통합 작업 상태 조회 API
+    
+    - 모든 작업(video, music, avatar, edit) 상태를 하나의 엔드포인트로 조회
+    - 프론트엔드에서 3초 간격으로 폴링하여 사용
+    - 상태가 completed가 되면 결과물 URL 반환
+    """
+    
+    # 1. project_id로 저장된 task 찾기 (task_id가 project_id인 경우)
+    task_data = task_store.get(task_id)
+    task_type = "video"
+    
+    # 2. task_id로 직접 찾기
+    if not task_data:
+        for key, data in task_store.items():
+            if data.get("task_id") == task_id:
+                task_data = data
+                # task type 판별
+                if key.startswith("music_"):
+                    task_type = "music"
+                elif key.startswith("edit_"):
+                    task_type = "edit"
+                elif data.get("model") == "heygen":
+                    task_type = "avatar"
+                break
+    
+    # 3. 찾지 못한 경우
+    if not task_data:
+        raise HTTPException(
+            status_code=404, 
+            detail=f"작업을 찾을 수 없습니다: {task_id}"
+        )
+    
+    # 상태 정규화
+    status = task_data.get("status", "processing")
+    progress = task_data.get("progress", 0)
+    
+    # completed 상태 정규화
+    if status in ["succeed", "success"]:
+        status = "completed"
+        progress = 100
+    
+    # 결과물 URL 추출
+    video_url = task_data.get("video_url")
+    audio_url = task_data.get("audio_url")
+    
+    # 완료 시간 기록
+    completed_at = None
+    if status == "completed":
+        completed_at = datetime.utcnow().isoformat()
+    
+    return FactoryStatusResponse(
+        success=True,
+        task_id=task_data.get("task_id", task_id),
+        task_type=task_type,
+        status=status,
+        progress=progress,
+        message=task_data.get("message", f"{task_type} 처리 중..."),
+        video_url=video_url,
+        audio_url=audio_url,
+        thumbnail_url=task_data.get("thumbnail_url"),
+        model=str(task_data.get("model", "")),
+        duration=task_data.get("duration"),
+        created_at=task_data.get("created_at"),
+        completed_at=completed_at
+    )
+
+
+@app.get("/api/factory/status/project/{project_id}")
+async def get_factory_status_by_project(project_id: str):
+    """
+    프로젝트 ID로 모든 관련 작업 상태 조회
+    - 비디오, 음악, 편집 등 모든 작업 상태를 한번에 반환
+    """
+    
+    results = {
+        "project_id": project_id,
+        "tasks": []
+    }
+    
+    # 비디오 작업
+    video_task = task_store.get(project_id)
+    if video_task:
+        results["tasks"].append({
+            "type": "video",
+            "task_id": video_task.get("task_id"),
+            "status": video_task.get("status"),
+            "progress": video_task.get("progress"),
+            "video_url": video_task.get("video_url"),
+            "model": str(video_task.get("model", ""))
+        })
+    
+    # 음악 작업
+    music_task = task_store.get(f"music_{project_id}")
+    if music_task:
+        results["tasks"].append({
+            "type": "music",
+            "task_id": music_task.get("task_id"),
+            "status": music_task.get("status"),
+            "progress": music_task.get("progress"),
+            "audio_url": music_task.get("audio_url"),
+            "model": "suno"
+        })
+    
+    # 편집 작업
+    edit_task = task_store.get(f"edit_{project_id}")
+    if edit_task:
+        results["tasks"].append({
+            "type": "edit",
+            "task_id": edit_task.get("task_id"),
+            "status": edit_task.get("status"),
+            "progress": edit_task.get("progress"),
+            "video_url": edit_task.get("video_url"),
+            "model": "creatomate"
+        })
+    
+    if not results["tasks"]:
+        raise HTTPException(status_code=404, detail="프로젝트에 작업이 없습니다.")
+    
+    return results
+
+
+# ============================================
 # HeyGen Avatar Generation
 # ============================================
 

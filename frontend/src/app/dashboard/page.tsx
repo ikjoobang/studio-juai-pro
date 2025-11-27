@@ -106,6 +106,9 @@ interface GenerationStatus {
   progress: number;
   message: string;
   error?: string;
+  taskId?: string;  // 폴링용 task_id
+  videoUrl?: string;  // 완료된 영상 URL
+  audioUrl?: string;  // 완료된 음악 URL
 }
 
 // ============================================
@@ -178,6 +181,13 @@ export default function DashboardPage() {
 
   // Error State
   const [error, setError] = useState<string | null>(null);
+
+  // Export State
+  const [canExport, setCanExport] = useState(false);
+  const [exportVideoUrl, setExportVideoUrl] = useState<string | null>(null);
+
+  // Audio Player Ref (for BGM)
+  const audioRef = useRef<HTMLAudioElement>(null);
 
   // ============================================
   // Video Player Controls
@@ -388,49 +398,79 @@ export default function DashboardPage() {
     }
   }, [prompt, selectedModel, selectedRatio, selectedPreset, currentProject]);
 
+  /**
+   * 폴링 로직 - 3초 간격으로 백엔드 상태 확인
+   * GET /api/factory/status/{task_id} 또는 /api/video/progress/{project_id}
+   */
   const pollVideoProgress = async (projectId: string) => {
-    const maxAttempts = 300; // 5분 (1초 * 300)
+    const maxAttempts = 100; // 최대 5분 (3초 * 100)
+    const pollInterval = 3000; // 3초 간격
     let attempts = 0;
+
+    console.log(`🔄 [폴링 시작] Project: ${projectId}, 간격: ${pollInterval}ms`);
 
     while (attempts < maxAttempts) {
       try {
+        // 통합 상태 API 호출 (3초 간격)
         const response = await fetch(
           `${API_BASE_URL}/api/video/progress/${projectId}`
         );
 
-        if (!response.ok) throw new Error("진행률 조회 실패");
+        if (!response.ok) {
+          console.warn(`⚠️ [폴링] HTTP ${response.status}`);
+          throw new Error("진행률 조회 실패");
+        }
 
         const data = await response.json();
+        const elapsed = Math.floor((attempts * pollInterval) / 1000);
+        const remainingTime = Math.ceil((maxAttempts * pollInterval - attempts * pollInterval) / 60000);
 
-        const remainingTime = Math.ceil((maxAttempts - attempts) / 60);
+        console.log(`📡 [폴링 #${attempts + 1}] 상태: ${data.status}, 진행률: ${data.progress}%, 경과: ${elapsed}초`);
+
+        // 상태 업데이트
         setGenerationStatus({
           isGenerating: true,
-          progress: data.progress,
-          message: data.message || `생성 중... (최대 ${remainingTime}분 남음)`,
+          progress: data.progress || 0,
+          message: data.message || `생성 중... (${elapsed}초 경과, 최대 ${remainingTime}분 남음)`,
+          taskId: data.task_id,
         });
 
-        if (data.status === "completed" && data.video_url) {
+        // Toast 업데이트 (진행률 표시)
+        if (data.progress > 0) {
+          toast.loading(`🎬 생성 중... ${data.progress}%`, { id: "generating" });
+        }
+
+        // ✅ 완료 상태
+        if ((data.status === "completed" || data.status === "succeed") && data.video_url) {
+          console.log(`✅ [영상 생성 완료] URL: ${data.video_url}`);
+          
           setGenerationStatus({
             isGenerating: false,
             progress: 100,
             message: "✅ 영상 생성 완료!",
+            videoUrl: data.video_url,
           });
 
-          // Success notification
+          // 성공 알림
           toast.success("🎬 영상 생성이 완료되었습니다!", { id: "generating" });
 
-          // Update video player
+          // 플레이어에 영상 세팅 및 재생
           if (videoRef.current) {
             videoRef.current.src = data.video_url;
             videoRef.current.load();
-            console.log("🎥 [Player] 비디오 로드됨:", data.video_url);
+            // 자동 재생 시도
+            videoRef.current.onloadeddata = () => {
+              console.log("🎥 [Player] 비디오 로드 완료, 재생 시작");
+              videoRef.current?.play().catch(() => {});
+              setIsPlaying(true);
+            };
           }
 
-          // Add to timeline
+          // 타임라인에 클립 추가
           addClipToTimeline({
             id: `clip_${Date.now()}`,
             type: "video",
-            name: "Generated Video",
+            name: `생성된 영상 (${data.model || "AI"})`,
             startTime: 0,
             duration: data.duration || 5,
             trackIndex: 0,
@@ -438,18 +478,27 @@ export default function DashboardPage() {
             color: "#03C75A",
           });
 
+          // 내보내기 활성화
+          setCanExport(true);
+          setExportVideoUrl(data.video_url);
+
           return;
         }
 
+        // ❌ 실패 상태
         if (data.status === "failed") {
-          toast.error(`❌ 생성 실패: ${data.message || "알 수 없는 오류"}`, { id: "generating" });
-          throw new Error(data.message || "영상 생성 실패");
+          const errorMsg = data.message || "영상 생성 실패";
+          console.error(`❌ [생성 실패] ${errorMsg}`);
+          toast.error(`❌ 생성 실패: ${errorMsg}`, { id: "generating" });
+          throw new Error(errorMsg);
         }
 
-        await new Promise((r) => setTimeout(r, 1000));
+        // 3초 대기 후 다음 폴링
+        await new Promise((r) => setTimeout(r, pollInterval));
         attempts++;
       } catch (err) {
         const errorMsg = err instanceof Error ? err.message : "오류 발생";
+        console.error(`❌ [폴링 오류] ${errorMsg}`);
         setError(errorMsg);
         setGenerationStatus({
           isGenerating: false,
@@ -461,6 +510,8 @@ export default function DashboardPage() {
       }
     }
 
+    // 시간 초과
+    console.error("⏰ [시간 초과] 5분 경과");
     toast.error("⏰ 영상 생성 시간 초과 (5분 경과)", { id: "generating" });
     setError("영상 생성 시간 초과 (5분 경과)");
     setGenerationStatus({
@@ -471,13 +522,54 @@ export default function DashboardPage() {
     });
   };
 
+  /**
+   * 내보내기 (Export) 핸들러
+   * - 영상 URL을 새 탭으로 열어 다운로드
+   * - 또는 Creatomate 렌더링 호출
+   */
+  const handleExport = useCallback(() => {
+    if (!exportVideoUrl) {
+      toast.error("내보낼 영상이 없습니다.");
+      return;
+    }
+
+    console.log("📤 [내보내기] URL:", exportVideoUrl);
+    
+    // 새 탭으로 영상 열기 (다운로드 가능)
+    window.open(exportVideoUrl, "_blank");
+    toast.success("📤 영상 다운로드 페이지가 열렸습니다!");
+  }, [exportVideoUrl]);
+
   // ============================================
   // Timeline Functions
   // ============================================
 
   const addClipToTimeline = (clip: TimelineClip) => {
-    setTimelineClips((prev) => [...prev, clip]);
+    setTimelineClips((prev) => {
+      // 중복 방지
+      const exists = prev.some((c) => c.url === clip.url);
+      if (exists) return prev;
+      return [...prev, clip];
+    });
   };
+
+  /**
+   * 타임라인 클립 클릭 핸들러
+   * - 클립 클릭 시 플레이어에 해당 미디어 로드
+   */
+  const handleClipClick = useCallback((clip: TimelineClip) => {
+    console.log("🎬 [타임라인] 클립 선택:", clip.name, clip.url);
+    
+    if (clip.type === "video" && clip.url && videoRef.current) {
+      videoRef.current.src = clip.url;
+      videoRef.current.load();
+      toast.success(`🎬 ${clip.name} 로드됨`);
+    } else if (clip.type === "audio" && clip.url && audioRef.current) {
+      audioRef.current.src = clip.url;
+      audioRef.current.load();
+      toast.success(`🎧 ${clip.name} 로드됨`);
+    }
+  }, []);
 
   const getTrackName = (index: number, type: string) => {
     const trackNames: Record<number, Record<string, string>> = {
@@ -1058,14 +1150,19 @@ export default function DashboardPage() {
                         .map((clip) => (
                           <div
                             key={clip.id}
-                            className="absolute top-2 bottom-2 rounded cursor-pointer hover:brightness-110 transition-all"
+                            className="absolute top-2 bottom-2 rounded cursor-pointer hover:brightness-110 hover:scale-105 transition-all shadow-lg"
                             style={{
                               left: `${(clip.startTime / (duration || 30)) * 100}%`,
                               width: `${(clip.duration / (duration || 30)) * 100}%`,
                               backgroundColor: clip.color || "#03C75A",
+                              minWidth: "60px",
                             }}
+                            onClick={() => handleClipClick(clip)}
+                            title={`클릭하여 재생: ${clip.name}`}
                           >
-                            <div className="px-2 py-1 text-xs font-medium truncate">
+                            <div className="px-2 py-1 text-xs font-medium truncate flex items-center gap-1">
+                              {clip.type === "video" && <Film className="w-3 h-3" />}
+                              {clip.type === "audio" && <Music className="w-3 h-3" />}
                               {clip.name}
                             </div>
                           </div>
@@ -1090,16 +1187,32 @@ export default function DashboardPage() {
                 <Button
                   variant="ghost"
                   size="sm"
-                  className="h-6 text-xs"
-                  disabled={timelineClips.length === 0}
+                  className={cn(
+                    "h-6 text-xs transition-all",
+                    canExport 
+                      ? "bg-[#03C75A] hover:bg-[#02a84d] text-white" 
+                      : "text-gray-500"
+                  )}
+                  disabled={!canExport}
+                  onClick={handleExport}
                 >
-                  Export
+                  {canExport ? (
+                    <>
+                      <CheckCircle className="w-3 h-3 mr-1" />
+                      내보내기
+                    </>
+                  ) : (
+                    "Export"
+                  )}
                 </Button>
               </div>
             </div>
           </div>
         </ResizablePanel>
       </ResizablePanelGroup>
+
+      {/* Hidden Audio Player for BGM */}
+      <audio ref={audioRef} className="hidden" />
     </div>
   );
 }
