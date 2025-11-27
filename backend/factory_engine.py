@@ -326,12 +326,12 @@ class GoAPIClient:
     
     BASE_URL = "https://api.goapi.ai/api/v1"
     
-    # 모델별 task_type 매핑 (GoAPI 2024 형식)
+    # 모델별 task_type 매핑 (GoAPI 2024 형식) - 확인완료!
     # 참조: https://goapi.ai/dashboard - Video Models
-    # 참고: Veo3.1은 text_to_video와 image_to_video 둘 다 지원
+    # ✅ 실제 테스트로 확인된 task_type만 사용
     MODEL_CONFIG = {
         VideoModel.KLING: {"task_type": "video_generation", "model": "kling"},
-        VideoModel.VEO: {"task_type": "text_to_video", "model": "veo3.1"},        # Veo3.1 - text_to_video 지원!
+        VideoModel.VEO: {"task_type": "veo3.1-video", "model": "veo3.1"},         # ✅ Veo3.1 - veo3.1-video (text-to-video)
         VideoModel.SORA: {"task_type": "sora2-video", "model": "sora2"},          # Sora2 - sora2-video
         VideoModel.HAILUO: {"task_type": "video_generation", "model": "hailuo"},
         VideoModel.LUMA: {"task_type": "video_generation", "model": "luma"},
@@ -340,7 +340,7 @@ class GoAPIClient:
     
     # Image-to-Video 지원 모델 (이미지 제공 시 task_type 변경)
     IMAGE_TO_VIDEO_CONFIG = {
-        VideoModel.VEO: {"task_type": "image_to_video", "model": "veo3.1"},       # Veo3.1 - image_to_video도 지원
+        VideoModel.VEO: {"task_type": "image_to_video", "model": "veo3.1"},       # Veo3.1 - image_to_video (이미지 필요)
     }
     
     def __init__(self):
@@ -376,7 +376,7 @@ class GoAPIClient:
             }
         }
         
-        # Veo3.1 - text_to_video (기본) 또는 image_to_video (이미지 제공 시)
+        # Veo3.1 - veo3.1-video (기본 text-to-video) 또는 image_to_video (이미지 제공 시)
         if request.model == VideoModel.VEO:
             if request.image_url:
                 # 이미지 있으면 image_to_video 사용
@@ -386,8 +386,8 @@ class GoAPIClient:
                 body["task_type"] = i2v_config["task_type"]
                 body["input"]["image_url"] = request.image_url
             else:
-                # 이미지 없으면 text_to_video 사용
-                print("✏️ [Veo3.1] 텍스트만 → text_to_video 모드")
+                # 이미지 없으면 veo3.1-video (text-to-video) 사용
+                print("✏️ [Veo3.1] 텍스트만 → veo3.1-video 모드 (text-to-video)")
         
         # Sora2 - sora2-video 형식
         elif request.model == VideoModel.SORA:
