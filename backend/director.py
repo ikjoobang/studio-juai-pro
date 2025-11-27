@@ -297,20 +297,19 @@ class AIDirector:
         """
         의도에 따른 툴 라우팅
         
-        GoAPI 2024 지원 모델:
-        - Kling: text-to-video ✅
-        - Veo3.1: image-to-video (이미지 필수) 
-        - Sora2: text-to-video ✅
+        GoAPI 2024 지원 모델 (2024-11 확인):
+        - Kling: text-to-video ✅ / image-to-video ✅
+        - Veo3.1: text-to-video ✅ / image-to-video ✅ (둘 다 지원!)
+        - Sora2: text-to-video ✅ (sora2-video)
         - Hailuo: text-to-video ✅
         - Luma: text-to-video ✅
         
-        ⚠️ Veo3.1은 이미지가 필요하므로 text-to-video인 경우 Kling 사용
+        ✔️ Veo3.1은 text_to_video 및 image_to_video 모두 지원
         """
         
-        # Text-to-video 전용 라우팅 맵
-        # Veo3.1은 image-to-video이므로 text 요청시 Kling 사용
+        # 스마트 라우팅 맵 - 의도별 최적 툴 선택
         routing_map = {
-            IntentCategory.REALISM_ACTION: (ToolType.KLING, None, "액션/리얼리즘 - Kling 고품질 text-to-video"),
+            IntentCategory.REALISM_ACTION: (ToolType.VEO, None, "액션/리얼리즘 - Veo3.1 물리법칙 적용"),
             IntentCategory.CHARACTER_PRODUCT: (ToolType.KLING, ToolType.MIDJOURNEY, "인물/제품 일관성 - 이미지 생성 후 영상화"),
             IntentCategory.INFORMATIONAL: (ToolType.HEYGEN, None, "정보 전달 - 스크립트 기반 아바타"),
             IntentCategory.CINEMATIC: (ToolType.SORA, None, "시네마틱 - Sora2 영화적 표현"),

@@ -328,13 +328,19 @@ class GoAPIClient:
     
     # 모델별 task_type 매핑 (GoAPI 2024 형식)
     # 참조: https://goapi.ai/dashboard - Video Models
+    # 참고: Veo3.1은 text_to_video와 image_to_video 둘 다 지원
     MODEL_CONFIG = {
         VideoModel.KLING: {"task_type": "video_generation", "model": "kling"},
-        VideoModel.VEO: {"task_type": "image_to_video", "model": "veo3.1"},      # Veo3.1 - image_to_video
+        VideoModel.VEO: {"task_type": "text_to_video", "model": "veo3.1"},        # Veo3.1 - text_to_video 지원!
         VideoModel.SORA: {"task_type": "sora2-video", "model": "sora2"},          # Sora2 - sora2-video
         VideoModel.HAILUO: {"task_type": "video_generation", "model": "hailuo"},
         VideoModel.LUMA: {"task_type": "video_generation", "model": "luma"},
         VideoModel.MIDJOURNEY: {"task_type": "image_generation", "model": "midjourney"},
+    }
+    
+    # Image-to-Video 지원 모델 (이미지 제공 시 task_type 변경)
+    IMAGE_TO_VIDEO_CONFIG = {
+        VideoModel.VEO: {"task_type": "image_to_video", "model": "veo3.1"},       # Veo3.1 - image_to_video도 지원
     }
     
     def __init__(self):
@@ -370,16 +376,18 @@ class GoAPIClient:
             }
         }
         
-        # Veo3.1 - image_to_video 형식 (이미지 필수)
+        # Veo3.1 - text_to_video (기본) 또는 image_to_video (이미지 제공 시)
         if request.model == VideoModel.VEO:
-            if not request.image_url:
-                # 이미지 없으면 Kling으로 폴백 (text-to-video)
-                print("⚠️ [Veo3.1] 이미지 없음 → Kling으로 폴백")
-                config = self.MODEL_CONFIG[VideoModel.KLING]
-                body["model"] = config["model"]
-                body["task_type"] = config["task_type"]
-            else:
+            if request.image_url:
+                # 이미지 있으면 image_to_video 사용
+                print("📸 [Veo3.1] 이미지 제공됨 → image_to_video 모드")
+                i2v_config = self.IMAGE_TO_VIDEO_CONFIG.get(VideoModel.VEO, config)
+                body["model"] = i2v_config["model"]
+                body["task_type"] = i2v_config["task_type"]
                 body["input"]["image_url"] = request.image_url
+            else:
+                # 이미지 없으면 text_to_video 사용
+                print("✏️ [Veo3.1] 텍스트만 → text_to_video 모드")
         
         # Sora2 - sora2-video 형식
         elif request.model == VideoModel.SORA:
