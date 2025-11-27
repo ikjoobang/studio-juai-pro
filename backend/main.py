@@ -1685,10 +1685,33 @@ Generate exactly {request.count} diverse templates now:"""
         }
         
     except Exception as e:
-        print(f"❌ [Gemini] 템플릿 생성 실패: {str(e)}")
+        error_msg = str(e)
+        print(f"❌ [Gemini] 템플릿 생성 실패: {error_msg}")
+        
+        # 403 Referrer 에러 처리
+        if "403" in error_msg or "REFERRER_BLOCKED" in error_msg or "referer" in error_msg.lower():
+            raise HTTPException(
+                status_code=403, 
+                detail="Gemini API 키에 HTTP Referrer 제한이 설정되어 있습니다. Google Cloud Console에서 API 키 제한을 'None' 또는 'IP addresses'로 변경해주세요."
+            )
+        
+        # 401 인증 에러
+        if "401" in error_msg or "invalid" in error_msg.lower() or "unauthorized" in error_msg.lower():
+            raise HTTPException(
+                status_code=401, 
+                detail="Gemini API 키가 유효하지 않습니다. GOOGLE_GEMINI_API_KEY를 확인해주세요."
+            )
+        
+        # 429 Rate Limit
+        if "429" in error_msg or "quota" in error_msg.lower() or "rate" in error_msg.lower():
+            raise HTTPException(
+                status_code=429, 
+                detail="Gemini API 사용량 한도에 도달했습니다. 잠시 후 다시 시도해주세요."
+            )
+        
         raise HTTPException(
             status_code=500, 
-            detail=f"템플릿 자동 생성 실패: {str(e)}"
+            detail=f"템플릿 자동 생성 실패: {error_msg}"
         )
 
 

@@ -1123,10 +1123,22 @@ export default function DashboardPage() {
                                   // Auto-select Kling model for I2V
                                   setSelectedModel("kling");
                                 } else {
-                                  toast.error("이미지 업로드 실패");
+                                  const errorData = await res.json().catch(() => ({}));
+                                  const errorMsg = errorData.detail || "이미지 업로드 실패";
+                                  console.error("[Upload Error]", errorMsg);
+                                  
+                                  // RLS 정책 에러 처리
+                                  if (errorMsg.includes("row-level security") || errorMsg.includes("403")) {
+                                    toast.error("🔒 스토리지 권한 설정이 필요합니다.\nSupabase 대시보드에서 Storage RLS 정책을 확인해주세요.", { duration: 5000 });
+                                  } else if (res.status === 503) {
+                                    toast.error("🔧 스토리지 서비스가 설정되지 않았습니다.");
+                                  } else {
+                                    toast.error(`❌ 업로드 실패: ${errorMsg.slice(0, 50)}`);
+                                  }
                                 }
                               } catch (err) {
-                                toast.error("이미지 업로드 오류");
+                                console.error("[Upload Exception]", err);
+                                toast.error("⚠️ 네트워크 오류가 발생했습니다.");
                               } finally {
                                 setIsUploading(false);
                               }
