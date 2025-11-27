@@ -597,14 +597,16 @@ class GoAPIClient:
                         return VideoResponse(
                             success=False,
                             status="error",
-                            message=f"GoAPI 오류: {error_msg}",
+                            message=f"현재 AI 공급사(GoAPI) 서버 점검 중입니다. 잠시 후 다시 시도해주세요. (코드: {error_msg})",
                             model=request.model.value
                         )
                 else:
+                    # 500/503 등 서버 오류
+                    friendly_msg = "현재 AI 공급사(GoAPI) 서버 점검 중입니다. 잠시 후 다시 시도해주세요."
                     return VideoResponse(
                         success=False,
                         status="error",
-                        message=f"GoAPI HTTP 오류: {response.status_code}",
+                        message=f"{friendly_msg} (HTTP {response.status_code})",
                         model=request.model.value
                     )
                     
@@ -613,7 +615,7 @@ class GoAPIClient:
             return VideoResponse(
                 success=False,
                 status="error",
-                message=f"GoAPI 연결 오류: {str(e)}",
+                message=f"현재 AI 공급사(GoAPI) 서버 연결에 실패했습니다. 잠시 후 다시 시도해주세요.",
                 model=request.model.value
             )
     
@@ -662,10 +664,12 @@ class GoAPIClient:
                         )
                 
                 # 오류 반환 (Fallback 가능)
+                # 500/503 서버 오류
+                friendly_msg = f"현재 {audio_model.value.upper()} 음악 서버 점검 중입니다."
                 return MusicResponse(
                     success=False,
                     status="error",
-                    message=f"{audio_model.value.upper()} API 오류: {response.status_code}",
+                    message=f"{friendly_msg} (HTTP {response.status_code})",
                     model=audio_model.value
                 )
                 
@@ -673,7 +677,7 @@ class GoAPIClient:
             return MusicResponse(
                 success=False,
                 status="error",
-                message=f"{audio_model.value.upper()} 연결 오류: {str(e)}",
+                message=f"현재 {audio_model.value.upper()} 서버 연결에 실패했습니다. 잠시 후 다시 시도해주세요.",
                 model=audio_model.value
             )
     
@@ -815,10 +819,11 @@ class GoAPIClient:
                 error_detail = response.text[:500] if response.text else "No response body"
                 print(f"❌ [Image API] 오류: {response.status_code} - {error_detail}")
                 
+                friendly_msg = "현재 AI 공급사(GoAPI) 이미지 서버 점검 중입니다. 잠시 후 다시 시도해주세요."
                 return ImageResponse(
                     success=False,
                     status="error",
-                    message=f"이미지 API 오류: {response.status_code} - {error_detail[:200]}",
+                    message=f"{friendly_msg} (HTTP {response.status_code})",
                     model=request.model.value
                 )
                 
@@ -826,7 +831,7 @@ class GoAPIClient:
             return ImageResponse(
                 success=False,
                 status="error",
-                message=f"이미지 연결 오류: {str(e)}",
+                message=f"현재 AI 공급사(GoAPI) 이미지 서버 연결에 실패했습니다. 잠시 후 다시 시도해주세요.",
                 model=request.model.value
             )
     

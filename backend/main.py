@@ -1741,10 +1741,12 @@ async def generate_music(request: MusicGenerateRequest, background_tasks: Backgr
     result = await factory.generate_music(music_request)
     
     if not result.success:
-        # Fallback이 모두 실패한 경우 상세 메시지 표시
-        error_msg = result.message
-        print(f"❌ [MUSIC API] 최종 실패: {error_msg}")
-        raise HTTPException(status_code=503, detail=f"음악 생성 실패 (Fallback 포함): {error_msg}")
+        # Fallback이 모두 실패한 경우 친절한 메시지 표시
+        print(f"❌ [MUSIC API] 최종 실패: {result.message}")
+        raise HTTPException(
+            status_code=503, 
+            detail="현재 AI 공급사(GoAPI) 음악 서버 점검 중입니다. 잠시 후 다시 시도해주세요."
+        )
     
     # Task 저장 (Fallback으로 Udio가 선택될 수 있음)
     task_store[f"music_{request.project_id}"] = {

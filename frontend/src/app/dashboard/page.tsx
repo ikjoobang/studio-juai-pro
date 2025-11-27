@@ -141,30 +141,43 @@ const ASPECT_RATIOS = [
 ];
 
 // Hybrid Engine - 모델 목록 (FULL UNLOCK)
+// ============================================
+// 🛡️ STABILITY MODE - 안정성 모드 설정
+// ============================================
+// 불안정한 모델은 disabled: true로 표시
+
 const AI_MODELS = [
-  // Video Models
-  { id: "auto", name: "🧠 Auto (AI Director)", description: "AI가 최적 모델 자동 선택", type: "video" },
-  { id: "kling", name: "🎬 Kling (Official)", description: "공식 API - I2V 지원", type: "video", badge: "Official" },
-  { id: "veo", name: "🌟 Veo 3.1 (Google)", description: "리얼리즘/물리 시뮬레이션", type: "video", badge: "NEW" },
-  { id: "sora", name: "🎥 Sora 2 (OpenAI)", description: "시네마틱/고품질", type: "video", badge: "PRO" },
-  { id: "luma", name: "✨ Luma (Dream Machine)", description: "크리에이티브/아트 스타일", type: "video", badge: "NEW" },
-  { id: "hailuo", name: "🚀 Hailuo (MiniMax)", description: "초고속/효율적", type: "video", badge: "FAST" },
-  // Image Models
-  { id: "flux", name: "🎨 Flux.1 Pro", description: "최고 품질 이미지", type: "image", badge: "BEST" },
-  { id: "midjourney", name: "🖼️ Midjourney", description: "예술적 이미지", type: "image" },
-  { id: "dalle", name: "🌈 DALL-E 3", description: "OpenAI 이미지", type: "image" },
-  // Audio Models
-  { id: "suno", name: "🎵 Suno (Music)", description: "AI 음악 생성", type: "audio" },
-  { id: "udio", name: "🎶 Udio (Music)", description: "AI 음악 생성 (백업)", type: "audio", badge: "BACKUP" },
+  // ✅ 안정적인 영상 모델 (추천) - 최상단 배치
+  { id: "kling", name: "🎬 Kling (Official)", description: "공식 API - I2V 지원", type: "video", badge: "추천", badgeColor: "bg-green-500", disabled: false },
+  { id: "veo", name: "🌟 Veo 3.1 (Google)", description: "리얼리즘/물리 시뮬레이션", type: "video", badge: "추천", badgeColor: "bg-green-500", disabled: false },
+  { id: "sora", name: "🎥 Sora 2 (OpenAI)", description: "시네마틱/고품질", type: "video", badge: "추천", badgeColor: "bg-green-500", disabled: false },
+  { id: "luma", name: "✨ Luma (Dream Machine)", description: "크리에이티브/아트 스타일", type: "video", badge: "안정", badgeColor: "bg-blue-500", disabled: false },
+  { id: "auto", name: "🧠 Auto (AI Director)", description: "AI가 최적 모델 자동 선택", type: "video", badge: "자동", badgeColor: "bg-purple-500", disabled: false },
+  
+  // ⚠️ 불안정한 영상 모델 (점검 중) - 비활성화
+  { id: "hailuo", name: "🚀 Hailuo (MiniMax)", description: "현재 점검 중", type: "video", badge: "점검중", badgeColor: "bg-gray-500", disabled: true },
+  
+  // ⚠️ 불안정한 이미지 모델 (점검 중) - 비활성화
+  { id: "flux", name: "🎨 Flux.1 Pro", description: "현재 점검 중", type: "image", badge: "점검중", badgeColor: "bg-gray-500", disabled: true },
+  { id: "midjourney", name: "🖼️ Midjourney", description: "현재 점검 중", type: "image", badge: "점검중", badgeColor: "bg-gray-500", disabled: true },
+  { id: "dalle", name: "🌈 DALL-E 3", description: "현재 점검 중", type: "image", badge: "점검중", badgeColor: "bg-gray-500", disabled: true },
+  
+  // ⚠️ 불안정한 오디오 모델 (점검 중) - 비활성화
+  { id: "suno", name: "🎵 Suno (Music)", description: "현재 점검 중", type: "audio", badge: "점검중", badgeColor: "bg-gray-500", disabled: true },
+  { id: "udio", name: "🎶 Udio (Music)", description: "현재 점검 중", type: "audio", badge: "점검중", badgeColor: "bg-gray-500", disabled: true },
+  
   // Avatar
-  { id: "heygen", name: "🎭 HeyGen", description: "AI 아바타 영상", type: "avatar" },
+  { id: "heygen", name: "🎭 HeyGen", description: "AI 아바타 영상", type: "avatar", badge: "", disabled: false },
 ];
 
 // 이미지 전용 모델 필터
 const IMAGE_MODELS = AI_MODELS.filter(m => m.type === "image");
 
-// 영상 전용 모델 필터
-const VIDEO_MODELS = AI_MODELS.filter(m => m.type === "video");
+// 영상 전용 모델 필터 (활성화된 것 우선 정렬)
+const VIDEO_MODELS = AI_MODELS.filter(m => m.type === "video").sort((a, b) => {
+  if (a.disabled === b.disabled) return 0;
+  return a.disabled ? 1 : -1;
+});
 
 // ============================================
 // Main Dashboard Component
@@ -1072,25 +1085,36 @@ export default function DashboardPage() {
                           />
                         </div>
 
-                        {/* Model Selection - VIDEO ONLY */}
+                        {/* Model Selection - VIDEO ONLY (Stability Mode) */}
                         <div className="mb-4">
-                          <label className="text-xs text-gray-500 mb-1 block">
+                          <label className="text-xs text-gray-500 mb-1 block flex items-center gap-2">
                             영상 모델
+                            <span className="text-[10px] px-1.5 py-0.5 bg-green-500/20 text-green-400 rounded">
+                              🛡️ 안정성 모드
+                            </span>
                           </label>
                           <Select
                             value={selectedModel}
-                            onValueChange={setSelectedModel}
+                            onValueChange={(val) => {
+                              const model = VIDEO_MODELS.find(m => m.id === val);
+                              if (model?.disabled) {
+                                toast.error("🛠️ 현재 점검 중인 모델입니다. 다른 모델을 선택해주세요.");
+                                return;
+                              }
+                              setSelectedModel(val);
+                            }}
                           >
                             <SelectTrigger className="bg-[#0a0a0a] border-[#333]">
                               <SelectValue />
                             </SelectTrigger>
                             <SelectContent className="bg-[#1a1a1a] border-[#333]">
-                              {VIDEO_MODELS.map((model) => (
+                              {/* 활성화된 모델만 표시 */}
+                              {VIDEO_MODELS.filter(m => !m.disabled).map((model) => (
                                 <SelectItem key={model.id} value={model.id}>
                                   <span className="flex items-center gap-2">
                                     {model.name}
                                     {model.badge && (
-                                      <span className="text-[10px] px-1.5 py-0.5 bg-[#03C75A]/20 text-[#03C75A] rounded">
+                                      <span className={`text-[10px] px-1.5 py-0.5 rounded ${model.badgeColor || "bg-gray-500"} text-white`}>
                                         {model.badge}
                                       </span>
                                     )}
@@ -1100,6 +1124,12 @@ export default function DashboardPage() {
                                   </span>
                                 </SelectItem>
                               ))}
+                              {/* 점검 중 모델 표시 (선택 불가) */}
+                              {VIDEO_MODELS.filter(m => m.disabled).length > 0 && (
+                                <div className="px-2 py-1 text-xs text-gray-500 border-t border-[#333] mt-1 pt-1">
+                                  ⚠️ 점검 중: {VIDEO_MODELS.filter(m => m.disabled).map(m => m.name.split(" ")[0]).join(", ")}
+                                </div>
+                              )}
                             </SelectContent>
                           </Select>
                         </div>
@@ -1176,93 +1206,76 @@ export default function DashboardPage() {
                       </>
                     )}
 
-                    {/* === IMAGE GENERATION MODE === */}
+                    {/* === IMAGE GENERATION MODE (점검 중) === */}
                     {generationMode === "image" && (
                       <>
-                        {/* Image Prompt Input */}
-                        <div className="mb-4">
+                        {/* 🛡️ 점검 중 알림 */}
+                        <div className="mb-4 p-4 bg-yellow-500/10 border border-yellow-500/30 rounded-lg">
+                          <div className="flex items-center gap-2 text-yellow-400 mb-2">
+                            <AlertCircle className="w-5 h-5" />
+                            <span className="font-semibold">🛠️ 이미지 생성 점검 중</span>
+                          </div>
+                          <p className="text-sm text-yellow-300/80">
+                            현재 AI 공급사(GoAPI) 이미지 서버 점검 중입니다.
+                            <br />
+                            점검이 완료되면 Flux.1 Pro, Midjourney, DALL-E 3 모델을 사용할 수 있습니다.
+                          </p>
+                          <p className="text-xs text-gray-500 mt-2">
+                            💡 영상 생성 탭에서 Kling, Veo 3.1, Sora 2를 이용해주세요!
+                          </p>
+                        </div>
+
+                        {/* Image Prompt Input (disabled) */}
+                        <div className="mb-4 opacity-50">
                           <label className="text-xs text-gray-500 mb-1 block">
                             이미지 프롬프트
                           </label>
                           <Textarea
-                            placeholder="만들고 싶은 이미지를 자세히 설명해주세요..."
+                            placeholder="점검 완료 후 사용 가능합니다..."
                             value={imagePrompt}
                             onChange={(e) => setImagePrompt(e.target.value)}
-                            className="bg-[#0a0a0a] border-[#333] focus:border-[#03C75A] min-h-[100px]"
+                            className="bg-[#0a0a0a] border-[#333] min-h-[100px]"
+                            disabled
                           />
                         </div>
 
-                        {/* Image Model Selection */}
-                        <div className="mb-4">
+                        {/* Image Model Selection (disabled) */}
+                        <div className="mb-4 opacity-50">
                           <label className="text-xs text-gray-500 mb-1 block">
                             이미지 모델
                           </label>
-                          <Select
-                            value={selectedImageModel}
-                            onValueChange={setSelectedImageModel}
-                          >
-                            <SelectTrigger className="bg-[#0a0a0a] border-[#333]">
-                              <SelectValue />
-                            </SelectTrigger>
-                            <SelectContent className="bg-[#1a1a1a] border-[#333]">
-                              {IMAGE_MODELS.map((model) => (
-                                <SelectItem key={model.id} value={model.id}>
-                                  <span className="flex items-center gap-2">
-                                    {model.name}
-                                    {model.badge && (
-                                      <span className="text-[10px] px-1.5 py-0.5 bg-[#03C75A]/20 text-[#03C75A] rounded">
-                                        {model.badge}
-                                      </span>
-                                    )}
-                                    <span className="text-xs text-gray-500">
-                                      ({model.description})
-                                    </span>
-                                  </span>
-                                </SelectItem>
-                              ))}
-                            </SelectContent>
-                          </Select>
+                          <div className="bg-[#0a0a0a] border border-[#333] rounded-md px-3 py-2 text-gray-500 text-sm">
+                            🛠️ 모든 이미지 모델 점검 중...
+                          </div>
                         </div>
 
-                        {/* Image Aspect Ratio */}
-                        <div className="mb-4">
+                        {/* Image Aspect Ratio (disabled) */}
+                        <div className="mb-4 opacity-50">
                           <label className="text-xs text-gray-500 mb-1 block">
                             비율
                           </label>
-                          <Select
-                            value={selectedRatio}
-                            onValueChange={setSelectedRatio}
-                          >
-                            <SelectTrigger className="bg-[#0a0a0a] border-[#333]">
-                              <SelectValue />
-                            </SelectTrigger>
-                            <SelectContent className="bg-[#1a1a1a] border-[#333]">
-                              {ASPECT_RATIOS.map((ratio) => (
-                                <SelectItem key={ratio.id} value={ratio.id}>
-                                  {ratio.name}
-                                </SelectItem>
-                              ))}
-                            </SelectContent>
-                          </Select>
+                          <div className="bg-[#0a0a0a] border border-[#333] rounded-md px-3 py-2 text-gray-500 text-sm">
+                            점검 완료 후 설정 가능
+                          </div>
                         </div>
 
-                        {/* Generate Image Button */}
+                        {/* Generate Image Button (disabled - 점검 중) */}
                         <Button
-                          className="w-full bg-[#9333ea] hover:bg-[#7e22ce] text-white font-semibold"
-                          onClick={generateImage}
-                          disabled={isImageGenerating || !imagePrompt.trim()}
+                          className="w-full bg-gray-600 text-gray-400 font-semibold cursor-not-allowed"
+                          disabled={true}
                         >
-                          {isImageGenerating ? (
-                            <>
-                              <Loader2 className="w-4 h-4 mr-2 animate-spin" />
-                              이미지 생성 중...
-                            </>
-                          ) : (
-                            <>
-                              <ImageIcon className="w-4 h-4 mr-2" />
-                              이미지 생성 (Flux.1)
-                            </>
-                          )}
+                          <AlertCircle className="w-4 h-4 mr-2" />
+                          이미지 생성 점검 중
+                        </Button>
+                        
+                        {/* 영상 생성 탭으로 이동 버튼 */}
+                        <Button
+                          variant="outline"
+                          className="w-full mt-2 border-[#03C75A] text-[#03C75A] hover:bg-[#03C75A]/10"
+                          onClick={() => setGenerationMode("video")}
+                        >
+                          <Film className="w-4 h-4 mr-2" />
+                          영상 생성 탭으로 이동
                         </Button>
 
                         {/* Generated Images Preview */}
@@ -1303,53 +1316,20 @@ export default function DashboardPage() {
                       </>
                     )}
 
-                    {/* 🎵 음악/자막 추가 버튼 */}
+                    {/* 🎵 음악/자막 추가 버튼 (음악은 점검 중) */}
                     <div className="grid grid-cols-2 gap-2 mt-3">
                       <Button
                         variant="outline"
                         size="sm"
-                        className="border-[#333] hover:bg-[#333] text-gray-300"
-                        disabled={!canExport}
-                        onClick={async () => {
-                          if (!exportVideoUrl) {
-                            toast.error("먼저 영상을 생성해주세요");
-                            return;
-                          }
-                          toast.loading("🎵 배경음악 생성 중...", { id: "music" });
-                          try {
-                            const res = await fetch(`${API_BASE_URL}/api/music/generate`, {
-                              method: "POST",
-                              headers: { "Content-Type": "application/json" },
-                              body: JSON.stringify({
-                                project_id: currentProject?.id || `project_${Date.now()}`,
-                                prompt: "cinematic background music",
-                                mood: "cinematic",
-                                duration: 30,
-                              }),
-                            });
-                            const data = await res.json();
-                            if (res.ok && data.audio_url) {
-                              toast.success("🎵 음악이 추가되었습니다!", { id: "music" });
-                              addClipToTimeline({
-                                id: `music_${Date.now()}`,
-                                type: "audio",
-                                name: "🎵 BGM",
-                                startTime: 0,
-                                duration: 30,
-                                trackIndex: 1,
-                                url: data.audio_url,
-                                color: "#22c55e",
-                              });
-                            } else {
-                              toast.error(data.detail || "음악 생성 실패", { id: "music" });
-                            }
-                          } catch (err) {
-                            toast.error("음악 생성 오류", { id: "music" });
-                          }
+                        className="border-[#333] text-gray-500 cursor-not-allowed opacity-50"
+                        disabled={true}
+                        title="현재 AI 공급사(GoAPI) 음악 서버 점검 중입니다."
+                        onClick={() => {
+                          toast.error("🛠️ 현재 AI 공급사(GoAPI) 음악 서버 점검 중입니다. 잠시 후 다시 시도해주세요.");
                         }}
                       >
                         <Music className="w-3 h-3 mr-1" />
-                        🎵 음악
+                        🎵 점검중
                       </Button>
                       <Button
                         variant="outline"
