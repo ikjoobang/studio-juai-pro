@@ -629,20 +629,21 @@ export default function AdminPage() {
 
                           <div className="flex items-center gap-2 ml-4">
                             <Button
-                              variant="ghost"
+                              variant="outline"
                               size="icon"
                               onClick={() => {
                                 setEditingTemplate(template);
                                 setIsTemplateDialogOpen(true);
                               }}
+                              className="border-[#03C75A] text-[#03C75A] hover:bg-[#03C75A] hover:text-white"
                             >
                               <Pencil className="w-4 h-4" />
                             </Button>
                             <Button
-                              variant="ghost"
+                              variant="outline"
                               size="icon"
                               onClick={() => deleteTemplate(template.id)}
-                              className="text-red-400 hover:text-red-300"
+                              className="border-red-500 text-red-400 hover:bg-red-500 hover:text-white"
                             >
                               <Trash2 className="w-4 h-4" />
                             </Button>
