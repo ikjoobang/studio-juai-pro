@@ -1,517 +1,348 @@
 -- ============================================
--- Super Agent Platform - Database Schema
--- Supabase (PostgreSQL)
+-- Studio Juai PRO - Supabase Database Schema
 -- ============================================
-
--- Enable necessary extensions
-CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
-CREATE EXTENSION IF NOT EXISTS "pgcrypto";
+-- 무인 영상 제작 공장 데이터베이스 스키마
+-- Supabase (PostgreSQL) 기반
 
 -- ============================================
--- 1. User Profiles (extends Supabase Auth)
+-- 1. 프로젝트 테이블
 -- ============================================
-CREATE TABLE IF NOT EXISTS public.profiles (
-    id UUID REFERENCES auth.users ON DELETE CASCADE PRIMARY KEY,
-    email TEXT UNIQUE,
-    full_name TEXT,
-    avatar_url TEXT,
-    company TEXT,
-    industry TEXT,
-    plan TEXT DEFAULT 'free' CHECK (plan IN ('free', 'pro', 'enterprise')),
-    credits_balance INTEGER DEFAULT 1000,
-    created_at TIMESTAMP WITH TIME ZONE DEFAULT TIMEZONE('utc'::TEXT, NOW()) NOT NULL,
-    updated_at TIMESTAMP WITH TIME ZONE DEFAULT TIMEZONE('utc'::TEXT, NOW()) NOT NULL
-);
-
--- Enable RLS
-ALTER TABLE public.profiles ENABLE ROW LEVEL SECURITY;
-
--- RLS Policies
-CREATE POLICY "Users can view own profile" ON public.profiles
-    FOR SELECT USING (auth.uid() = id);
-
-CREATE POLICY "Users can update own profile" ON public.profiles
-    FOR UPDATE USING (auth.uid() = id);
-
--- Trigger to create profile on signup
-CREATE OR REPLACE FUNCTION public.handle_new_user()
-RETURNS TRIGGER AS $$
-BEGIN
-    INSERT INTO public.profiles (id, email, full_name, avatar_url)
-    VALUES (
-        NEW.id,
-        NEW.email,
-        NEW.raw_user_meta_data->>'full_name',
-        NEW.raw_user_meta_data->>'avatar_url'
-    );
-    RETURN NEW;
-END;
-$$ LANGUAGE plpgsql SECURITY DEFINER;
-
-CREATE TRIGGER on_auth_user_created
-    AFTER INSERT ON auth.users
-    FOR EACH ROW EXECUTE FUNCTION public.handle_new_user();
-
-
--- ============================================
--- 2. Projects (프로젝트 및 클라이언트 요구사항)
--- ============================================
-CREATE TABLE IF NOT EXISTS public.projects (
-    id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
-    user_id UUID REFERENCES auth.users NOT NULL,
-    
-    -- Basic Info
+CREATE TABLE IF NOT EXISTS projects (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    user_id TEXT NOT NULL,
     title TEXT NOT NULL,
     description TEXT,
-    industry TEXT,
     
-    -- Target Settings
-    target_channel TEXT[] DEFAULT '{}',
-    aspect_ratio TEXT DEFAULT '9:16' CHECK (aspect_ratio IN ('9:16', '16:9', '1:1', '4:5', '4:3')),
-    duration INTEGER DEFAULT 30, -- seconds
+    -- 영상 설정
+    aspect_ratio TEXT DEFAULT '9:16',
+    preset TEXT DEFAULT 'warm_film',
+    model TEXT DEFAULT 'auto',
     
-    -- Style Settings
-    style_preset TEXT DEFAULT 'iphone_korean' CHECK (style_preset IN (
-        'iphone_korean', 'professional', 'cinematic', 'minimal', 'trendy'
-    )),
+    -- 상태
+    status TEXT DEFAULT 'idle', -- idle, processing, completed, failed
     
-    -- Client Requirements
-    client_requirements TEXT,
-    reference_urls TEXT[] DEFAULT '{}',
-    brand_guidelines JSONB DEFAULT '{}',
+    -- 생성된 영상
+    video_url TEXT,
+    thumbnail_url TEXT,
+    duration FLOAT,
     
-    -- Status
-    status TEXT DEFAULT 'waiting' CHECK (status IN (
-        'waiting', 'analyzing', 'generating', 'processing', 'completed', 'failed'
-    )),
-    progress INTEGER DEFAULT 0 CHECK (progress >= 0 AND progress <= 100),
+    -- 메타데이터
+    task_id TEXT,
+    routing_info JSONB,
+    
+    -- 타임스탬프
+    created_at TIMESTAMPTZ DEFAULT NOW(),
+    updated_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+-- 인덱스
+CREATE INDEX IF NOT EXISTS idx_projects_user_id ON projects(user_id);
+CREATE INDEX IF NOT EXISTS idx_projects_status ON projects(status);
+CREATE INDEX IF NOT EXISTS idx_projects_created_at ON projects(created_at DESC);
+
+
+-- ============================================
+-- 2. 프롬프트 템플릿 테이블
+-- ============================================
+CREATE TABLE IF NOT EXISTS prompt_templates (
+    id TEXT PRIMARY KEY,
+    name TEXT NOT NULL,
+    category TEXT NOT NULL, -- e-commerce, entertainment, informational, action
+    
+    -- 프롬프트 설정
+    system_instruction TEXT NOT NULL,
+    prompt_template TEXT NOT NULL,
+    
+    -- 기본 설정
+    default_model TEXT DEFAULT 'kling',
+    default_style TEXT DEFAULT 'warm_film',
+    
+    -- 메타데이터
+    is_active BOOLEAN DEFAULT true,
+    usage_count INTEGER DEFAULT 0,
+    
+    -- 타임스탬프
+    created_at TIMESTAMPTZ DEFAULT NOW(),
+    updated_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+-- 기본 템플릿 삽입
+INSERT INTO prompt_templates (id, name, category, system_instruction, prompt_template, default_model, default_style)
+VALUES 
+    ('shopping_mall', '쇼핑몰용 프롬프트', 'e-commerce', 
+     '제품의 특징을 부각시키고, 구매 욕구를 자극하는 영상을 만들어주세요. 깔끔한 배경, 제품 클로즈업, 사용 장면을 포함합니다.',
+     '{product_name}, professional product video, studio lighting, white background, 360 degree rotation, close-up details, lifestyle usage scene',
+     'kling', 'cool_modern'),
+    
+    ('movie_trailer', '영화/트레일러용 프롬프트', 'entertainment',
+     '영화적 분위기와 드라마틱한 연출로 시청자의 감정을 자극하는 영상을 만들어주세요.',
+     '{scene_description}, cinematic, dramatic lighting, anamorphic lens, film grain, epic atmosphere, hollywood quality',
+     'sora', 'cinematic_teal_orange'),
+    
+    ('news_report', '뉴스/리포트용 프롬프트', 'informational',
+     '전문적이고 신뢰감 있는 뉴스 리포터 스타일의 영상을 만들어주세요.',
+     'Professional news presenter, {topic}, broadcast quality, studio setting, teleprompter style delivery',
+     'heygen', 'cool_modern'),
+    
+    ('action_sports', '액션/스포츠용 프롬프트', 'action',
+     '역동적인 움직임과 속도감을 강조하는 영상을 만들어주세요. 물리적으로 정확한 표현이 중요합니다.',
+     '{action_description}, dynamic movement, high speed, motion blur, FPV shot, tracking shot, photorealistic physics',
+     'veo', 'vibrant')
+ON CONFLICT (id) DO NOTHING;
+
+
+-- ============================================
+-- 3. 벤더 (API 서비스) 테이블
+-- ============================================
+CREATE TABLE IF NOT EXISTS vendors (
+    id TEXT PRIMARY KEY,
+    name TEXT NOT NULL,
+    api_endpoint TEXT NOT NULL,
+    api_key_env TEXT NOT NULL, -- 환경변수명
+    model_type TEXT NOT NULL, -- video_generation, image_generation, avatar_generation, video_editing, ai_brain
+    models TEXT[], -- 지원하는 모델 목록
+    
+    -- 설정
+    is_active BOOLEAN DEFAULT true,
+    priority INTEGER DEFAULT 0, -- 우선순위 (높을수록 우선)
+    
+    -- 사용량 추적
+    total_requests INTEGER DEFAULT 0,
+    successful_requests INTEGER DEFAULT 0,
+    failed_requests INTEGER DEFAULT 0,
+    
+    -- 타임스탬프
+    created_at TIMESTAMPTZ DEFAULT NOW(),
+    updated_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+-- 기본 벤더 삽입
+INSERT INTO vendors (id, name, api_endpoint, api_key_env, model_type, models, priority)
+VALUES 
+    ('goapi', 'GoAPI (Universal)', 'https://api.goapi.ai/api/v1', 'GOAPI_KEY', 
+     'video_generation', ARRAY['kling', 'veo', 'sora', 'hailuo', 'luma', 'midjourney'], 10),
+    
+    ('kling_official', 'Kling Official', 'https://api.klingai.com', 'KLING_ACCESS_KEY',
+     'video_generation', ARRAY['kling'], 20),
+    
+    ('heygen', 'HeyGen', 'https://api.heygen.com', 'HEYGEN_API_KEY',
+     'avatar_generation', ARRAY['heygen_avatar'], 10),
+    
+    ('creatomate', 'Creatomate', 'https://api.creatomate.com/v1', 'CREATOMATE_API_KEY',
+     'video_editing', ARRAY['creatomate_editor'], 10),
+    
+    ('gemini', 'Google Gemini', 'https://generativelanguage.googleapis.com', 'GOOGLE_GEMINI_API_KEY',
+     'ai_brain', ARRAY['gemini-1.5-pro'], 10)
+ON CONFLICT (id) DO NOTHING;
+
+
+-- ============================================
+-- 4. 트렌드 테이블
+-- ============================================
+CREATE TABLE IF NOT EXISTS trends (
+    id SERIAL PRIMARY KEY,
+    keyword TEXT NOT NULL UNIQUE,
+    category TEXT, -- optional category
+    
+    -- 점수/인기도
+    score FLOAT DEFAULT 0,
+    
+    -- 유효기간
+    valid_from TIMESTAMPTZ DEFAULT NOW(),
+    valid_until TIMESTAMPTZ DEFAULT (NOW() + INTERVAL '7 days'),
+    
+    -- 타임스탬프
+    created_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+-- 인덱스
+CREATE INDEX IF NOT EXISTS idx_trends_valid ON trends(valid_until) WHERE valid_until > NOW();
+
+
+-- ============================================
+-- 5. 생성 작업 테이블
+-- ============================================
+CREATE TABLE IF NOT EXISTS generation_tasks (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    project_id UUID REFERENCES projects(id) ON DELETE CASCADE,
+    
+    -- 외부 API 정보
+    task_id TEXT, -- GoAPI/Kling 등의 task_id
+    vendor TEXT NOT NULL, -- goapi, kling_official, heygen, creatomate
+    model TEXT NOT NULL,
+    
+    -- 요청 정보
+    prompt TEXT NOT NULL,
+    aspect_ratio TEXT,
+    duration INTEGER,
+    style_preset TEXT,
+    
+    -- 상태
+    status TEXT DEFAULT 'pending', -- pending, processing, completed, failed
+    progress INTEGER DEFAULT 0,
+    
+    -- 결과
+    video_url TEXT,
+    thumbnail_url TEXT,
     error_message TEXT,
     
-    -- Metadata
-    metadata JSONB DEFAULT '{}',
+    -- AI Director 정보
+    routing_info JSONB,
     
-    -- Timestamps
-    created_at TIMESTAMP WITH TIME ZONE DEFAULT TIMEZONE('utc'::TEXT, NOW()) NOT NULL,
-    updated_at TIMESTAMP WITH TIME ZONE DEFAULT TIMEZONE('utc'::TEXT, NOW()) NOT NULL,
-    completed_at TIMESTAMP WITH TIME ZONE
+    -- 타임스탬프
+    created_at TIMESTAMPTZ DEFAULT NOW(),
+    started_at TIMESTAMPTZ,
+    completed_at TIMESTAMPTZ
 );
 
--- Indexes
-CREATE INDEX idx_projects_user_id ON public.projects(user_id);
-CREATE INDEX idx_projects_status ON public.projects(status);
-CREATE INDEX idx_projects_created_at ON public.projects(created_at DESC);
-
--- Enable RLS
-ALTER TABLE public.projects ENABLE ROW LEVEL SECURITY;
-
--- RLS Policies
-CREATE POLICY "Users can view own projects" ON public.projects
-    FOR SELECT USING (auth.uid() = user_id);
-
-CREATE POLICY "Users can create own projects" ON public.projects
-    FOR INSERT WITH CHECK (auth.uid() = user_id);
-
-CREATE POLICY "Users can update own projects" ON public.projects
-    FOR UPDATE USING (auth.uid() = user_id);
-
-CREATE POLICY "Users can delete own projects" ON public.projects
-    FOR DELETE USING (auth.uid() = user_id);
+-- 인덱스
+CREATE INDEX IF NOT EXISTS idx_tasks_project_id ON generation_tasks(project_id);
+CREATE INDEX IF NOT EXISTS idx_tasks_status ON generation_tasks(status);
+CREATE INDEX IF NOT EXISTS idx_tasks_task_id ON generation_tasks(task_id);
 
 
 -- ============================================
--- 3. Assets (자산 - 결과물)
+-- 6. 사용자 세션 테이블 (선택적)
 -- ============================================
-CREATE TABLE IF NOT EXISTS public.assets (
-    id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
-    project_id UUID REFERENCES public.projects(id) ON DELETE CASCADE NOT NULL,
+CREATE TABLE IF NOT EXISTS user_sessions (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    user_id TEXT NOT NULL,
+    token TEXT NOT NULL UNIQUE,
     
-    -- Asset Info
-    type TEXT NOT NULL CHECK (type IN ('image', 'video', 'audio', 'thumbnail')),
-    name TEXT,
-    url TEXT NOT NULL,
+    -- 세션 정보
+    ip_address TEXT,
+    user_agent TEXT,
     
-    -- Generation Info
-    prompt_used TEXT,
-    vendor TEXT, -- Kling, Midjourney, HeyGen, Creatomate
-    model_version TEXT,
+    -- 유효기간
+    expires_at TIMESTAMPTZ NOT NULL,
     
-    -- Technical Details
-    width INTEGER,
-    height INTEGER,
-    duration_seconds NUMERIC(10, 2),
-    file_size_bytes BIGINT,
-    mime_type TEXT,
-    
-    -- Status
-    status TEXT DEFAULT 'created' CHECK (status IN (
-        'created', 'processing', 'ready', 'failed', 'deleted'
-    )),
-    
-    -- Metadata
-    metadata JSONB DEFAULT '{}',
-    
-    -- Timestamps
-    created_at TIMESTAMP WITH TIME ZONE DEFAULT TIMEZONE('utc'::TEXT, NOW()) NOT NULL
+    -- 타임스탬프
+    created_at TIMESTAMPTZ DEFAULT NOW()
 );
 
--- Indexes
-CREATE INDEX idx_assets_project_id ON public.assets(project_id);
-CREATE INDEX idx_assets_type ON public.assets(type);
-CREATE INDEX idx_assets_status ON public.assets(status);
-
--- Enable RLS
-ALTER TABLE public.assets ENABLE ROW LEVEL SECURITY;
-
--- RLS Policies (through project ownership)
-CREATE POLICY "Users can view own assets" ON public.assets
-    FOR SELECT USING (
-        EXISTS (
-            SELECT 1 FROM public.projects
-            WHERE projects.id = assets.project_id
-            AND projects.user_id = auth.uid()
-        )
-    );
-
-CREATE POLICY "Users can create assets for own projects" ON public.assets
-    FOR INSERT WITH CHECK (
-        EXISTS (
-            SELECT 1 FROM public.projects
-            WHERE projects.id = assets.project_id
-            AND projects.user_id = auth.uid()
-        )
-    );
+-- 만료된 세션 자동 정리 (선택적)
+-- CREATE INDEX IF NOT EXISTS idx_sessions_expires ON user_sessions(expires_at);
 
 
 -- ============================================
--- 4. Vendors (API 벤더 설정)
+-- 7. 감사 로그 테이블
 -- ============================================
-CREATE TABLE IF NOT EXISTS public.vendors (
-    id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
+CREATE TABLE IF NOT EXISTS audit_logs (
+    id SERIAL PRIMARY KEY,
+    user_id TEXT,
+    action TEXT NOT NULL, -- create_project, generate_video, update_template, etc.
+    resource_type TEXT, -- project, template, vendor, etc.
+    resource_id TEXT,
     
-    -- Vendor Info
-    service_name TEXT NOT NULL UNIQUE,
-    display_name TEXT NOT NULL,
-    description TEXT,
-    category TEXT CHECK (category IN ('image', 'video', 'audio', 'avatar', 'template')),
+    -- 변경 내용
+    old_value JSONB,
+    new_value JSONB,
     
-    -- API Configuration
-    api_endpoint TEXT,
-    parameter_map JSONB DEFAULT '{}',
+    -- 메타데이터
+    ip_address TEXT,
+    user_agent TEXT,
     
-    -- Rate Limits
-    rate_limit_per_minute INTEGER DEFAULT 60,
-    rate_limit_per_day INTEGER DEFAULT 1000,
-    
-    -- Pricing
-    cost_per_request NUMERIC(10, 4) DEFAULT 0,
-    
-    -- Status
-    is_active BOOLEAN DEFAULT TRUE,
-    health_status TEXT DEFAULT 'healthy' CHECK (health_status IN ('healthy', 'degraded', 'down')),
-    last_health_check TIMESTAMP WITH TIME ZONE,
-    
-    -- Metadata
-    metadata JSONB DEFAULT '{}',
-    
-    -- Timestamps
-    created_at TIMESTAMP WITH TIME ZONE DEFAULT TIMEZONE('utc'::TEXT, NOW()) NOT NULL,
-    updated_at TIMESTAMP WITH TIME ZONE DEFAULT TIMEZONE('utc'::TEXT, NOW()) NOT NULL
+    -- 타임스탬프
+    created_at TIMESTAMPTZ DEFAULT NOW()
 );
 
--- Insert default vendors
-INSERT INTO public.vendors (service_name, display_name, description, category, is_active) VALUES
-    ('kling', 'Kling AI', 'AI 영상 생성', 'video', TRUE),
-    ('midjourney', 'Midjourney', 'AI 이미지 생성', 'image', TRUE),
-    ('heygen', 'HeyGen', 'AI 아바타 영상', 'avatar', TRUE),
-    ('creatomate', 'Creatomate', '영상 템플릿 렌더링', 'template', TRUE),
-    ('elevenlabs', 'ElevenLabs', 'AI 음성 합성', 'audio', TRUE),
-    ('runway', 'Runway', 'AI 영상 편집', 'video', TRUE)
-ON CONFLICT (service_name) DO NOTHING;
+-- 인덱스
+CREATE INDEX IF NOT EXISTS idx_audit_user ON audit_logs(user_id);
+CREATE INDEX IF NOT EXISTS idx_audit_action ON audit_logs(action);
+CREATE INDEX IF NOT EXISTS idx_audit_created ON audit_logs(created_at DESC);
 
 
 -- ============================================
--- 5. User Actions (사용자 행동 로깅)
+-- 8. 업데이트 트리거 함수
 -- ============================================
-CREATE TABLE IF NOT EXISTS public.user_actions (
-    id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
-    user_id UUID REFERENCES auth.users NOT NULL,
-    
-    -- Action Info
-    action TEXT NOT NULL,
-    action_category TEXT,
-    
-    -- Context
-    page_path TEXT,
-    session_id TEXT,
-    metadata JSONB DEFAULT '{}',
-    
-    -- Timestamps
-    created_at TIMESTAMP WITH TIME ZONE DEFAULT TIMEZONE('utc'::TEXT, NOW()) NOT NULL
-);
-
--- Indexes
-CREATE INDEX idx_user_actions_user_id ON public.user_actions(user_id);
-CREATE INDEX idx_user_actions_action ON public.user_actions(action);
-CREATE INDEX idx_user_actions_created_at ON public.user_actions(created_at DESC);
-
--- Enable RLS
-ALTER TABLE public.user_actions ENABLE ROW LEVEL SECURITY;
-
--- RLS Policy
-CREATE POLICY "Users can view own actions" ON public.user_actions
-    FOR SELECT USING (auth.uid() = user_id);
-
-CREATE POLICY "Users can create own actions" ON public.user_actions
-    FOR INSERT WITH CHECK (auth.uid() = user_id);
-
-
--- ============================================
--- 6. Chat Sessions (채팅 세션)
--- ============================================
-CREATE TABLE IF NOT EXISTS public.chat_sessions (
-    id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
-    user_id UUID REFERENCES auth.users NOT NULL,
-    
-    -- Session Info
-    title TEXT,
-    is_active BOOLEAN DEFAULT TRUE,
-    
-    -- Timestamps
-    created_at TIMESTAMP WITH TIME ZONE DEFAULT TIMEZONE('utc'::TEXT, NOW()) NOT NULL,
-    last_message_at TIMESTAMP WITH TIME ZONE DEFAULT TIMEZONE('utc'::TEXT, NOW()) NOT NULL
-);
-
--- Indexes
-CREATE INDEX idx_chat_sessions_user_id ON public.chat_sessions(user_id);
-
--- Enable RLS
-ALTER TABLE public.chat_sessions ENABLE ROW LEVEL SECURITY;
-
--- RLS Policies
-CREATE POLICY "Users can manage own chat sessions" ON public.chat_sessions
-    FOR ALL USING (auth.uid() = user_id);
-
-
--- ============================================
--- 7. Chat Messages (채팅 메시지)
--- ============================================
-CREATE TABLE IF NOT EXISTS public.chat_messages (
-    id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
-    session_id UUID REFERENCES public.chat_sessions(id) ON DELETE CASCADE NOT NULL,
-    
-    -- Message Info
-    role TEXT NOT NULL CHECK (role IN ('user', 'assistant', 'system')),
-    content TEXT NOT NULL,
-    
-    -- Action Cards
-    action_cards JSONB DEFAULT '[]',
-    
-    -- Metadata
-    metadata JSONB DEFAULT '{}',
-    
-    -- Timestamps
-    created_at TIMESTAMP WITH TIME ZONE DEFAULT TIMEZONE('utc'::TEXT, NOW()) NOT NULL
-);
-
--- Indexes
-CREATE INDEX idx_chat_messages_session_id ON public.chat_messages(session_id);
-CREATE INDEX idx_chat_messages_created_at ON public.chat_messages(created_at);
-
--- Enable RLS
-ALTER TABLE public.chat_messages ENABLE ROW LEVEL SECURITY;
-
--- RLS Policy (through session ownership)
-CREATE POLICY "Users can manage own chat messages" ON public.chat_messages
-    FOR ALL USING (
-        EXISTS (
-            SELECT 1 FROM public.chat_sessions
-            WHERE chat_sessions.id = chat_messages.session_id
-            AND chat_sessions.user_id = auth.uid()
-        )
-    );
-
-
--- ============================================
--- 8. Trends (트렌드 데이터 캐시)
--- ============================================
-CREATE TABLE IF NOT EXISTS public.trends (
-    id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
-    
-    -- Trend Info
-    platform TEXT NOT NULL CHECK (platform IN ('youtube', 'instagram', 'tiktok', 'google')),
-    category TEXT,
-    title TEXT NOT NULL,
-    description TEXT,
-    
-    -- Metrics
-    growth_rate NUMERIC(10, 2),
-    engagement_score NUMERIC(10, 2),
-    search_volume INTEGER,
-    
-    -- Keywords
-    keywords TEXT[] DEFAULT '{}',
-    
-    -- Source
-    source_url TEXT,
-    
-    -- Status
-    is_active BOOLEAN DEFAULT TRUE,
-    
-    -- Timestamps
-    fetched_at TIMESTAMP WITH TIME ZONE DEFAULT TIMEZONE('utc'::TEXT, NOW()) NOT NULL,
-    expires_at TIMESTAMP WITH TIME ZONE
-);
-
--- Indexes
-CREATE INDEX idx_trends_platform ON public.trends(platform);
-CREATE INDEX idx_trends_category ON public.trends(category);
-CREATE INDEX idx_trends_fetched_at ON public.trends(fetched_at DESC);
-
-
--- ============================================
--- 9. Payments (결제 내역)
--- ============================================
-CREATE TABLE IF NOT EXISTS public.payments (
-    id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
-    user_id UUID REFERENCES auth.users NOT NULL,
-    
-    -- Payment Info
-    amount NUMERIC(10, 2) NOT NULL,
-    currency TEXT DEFAULT 'KRW',
-    
-    -- PortOne Integration
-    portone_payment_id TEXT UNIQUE,
-    merchant_uid TEXT UNIQUE,
-    
-    -- Plan Info
-    plan_type TEXT CHECK (plan_type IN ('credits', 'subscription')),
-    plan_name TEXT,
-    credits_amount INTEGER,
-    
-    -- Status
-    status TEXT DEFAULT 'pending' CHECK (status IN (
-        'pending', 'paid', 'failed', 'cancelled', 'refunded'
-    )),
-    
-    -- Metadata
-    metadata JSONB DEFAULT '{}',
-    
-    -- Timestamps
-    created_at TIMESTAMP WITH TIME ZONE DEFAULT TIMEZONE('utc'::TEXT, NOW()) NOT NULL,
-    paid_at TIMESTAMP WITH TIME ZONE,
-    refunded_at TIMESTAMP WITH TIME ZONE
-);
-
--- Indexes
-CREATE INDEX idx_payments_user_id ON public.payments(user_id);
-CREATE INDEX idx_payments_status ON public.payments(status);
-CREATE INDEX idx_payments_created_at ON public.payments(created_at DESC);
-
--- Enable RLS
-ALTER TABLE public.payments ENABLE ROW LEVEL SECURITY;
-
--- RLS Policy
-CREATE POLICY "Users can view own payments" ON public.payments
-    FOR SELECT USING (auth.uid() = user_id);
-
-
--- ============================================
--- 10. Templates (영상 템플릿)
--- ============================================
-CREATE TABLE IF NOT EXISTS public.templates (
-    id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
-    
-    -- Template Info
-    name TEXT NOT NULL,
-    description TEXT,
-    category TEXT,
-    industry TEXT[] DEFAULT '{}',
-    
-    -- Template Settings
-    aspect_ratio TEXT DEFAULT '9:16',
-    duration_seconds INTEGER,
-    
-    -- Creatomate Integration
-    creatomate_template_id TEXT,
-    
-    -- Preview
-    thumbnail_url TEXT,
-    preview_url TEXT,
-    
-    -- Status
-    is_active BOOLEAN DEFAULT TRUE,
-    is_premium BOOLEAN DEFAULT FALSE,
-    
-    -- Pricing
-    credits_cost INTEGER DEFAULT 10,
-    
-    -- Metadata
-    metadata JSONB DEFAULT '{}',
-    
-    -- Timestamps
-    created_at TIMESTAMP WITH TIME ZONE DEFAULT TIMEZONE('utc'::TEXT, NOW()) NOT NULL
-);
-
--- Indexes
-CREATE INDEX idx_templates_category ON public.templates(category);
-CREATE INDEX idx_templates_is_active ON public.templates(is_active);
-
-
--- ============================================
--- Functions & Triggers
--- ============================================
-
--- Function to update updated_at timestamp
-CREATE OR REPLACE FUNCTION update_updated_at_column()
+CREATE OR REPLACE FUNCTION update_updated_at()
 RETURNS TRIGGER AS $$
 BEGIN
-    NEW.updated_at = TIMEZONE('utc'::TEXT, NOW());
+    NEW.updated_at = NOW();
     RETURN NEW;
 END;
 $$ LANGUAGE plpgsql;
 
--- Apply trigger to tables with updated_at
-CREATE TRIGGER update_profiles_updated_at
-    BEFORE UPDATE ON public.profiles
-    FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
-
+-- 트리거 적용
+DROP TRIGGER IF EXISTS update_projects_updated_at ON projects;
 CREATE TRIGGER update_projects_updated_at
-    BEFORE UPDATE ON public.projects
-    FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
+    BEFORE UPDATE ON projects
+    FOR EACH ROW
+    EXECUTE FUNCTION update_updated_at();
 
+DROP TRIGGER IF EXISTS update_templates_updated_at ON prompt_templates;
+CREATE TRIGGER update_templates_updated_at
+    BEFORE UPDATE ON prompt_templates
+    FOR EACH ROW
+    EXECUTE FUNCTION update_updated_at();
+
+DROP TRIGGER IF EXISTS update_vendors_updated_at ON vendors;
 CREATE TRIGGER update_vendors_updated_at
-    BEFORE UPDATE ON public.vendors
-    FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
+    BEFORE UPDATE ON vendors
+    FOR EACH ROW
+    EXECUTE FUNCTION update_updated_at();
 
 
 -- ============================================
--- Views (편의용 뷰)
+-- 9. Row Level Security (RLS) 정책
+-- ============================================
+-- Supabase에서 RLS를 활성화하려면 아래 주석을 해제하세요
+
+-- ALTER TABLE projects ENABLE ROW LEVEL SECURITY;
+-- ALTER TABLE generation_tasks ENABLE ROW LEVEL SECURITY;
+
+-- CREATE POLICY "Users can view own projects" ON projects
+--     FOR SELECT USING (auth.uid()::text = user_id);
+
+-- CREATE POLICY "Users can insert own projects" ON projects
+--     FOR INSERT WITH CHECK (auth.uid()::text = user_id);
+
+-- CREATE POLICY "Users can update own projects" ON projects
+--     FOR UPDATE USING (auth.uid()::text = user_id);
+
+
+-- ============================================
+-- 10. 뷰 (Views)
 -- ============================================
 
--- Project with asset count
-CREATE OR REPLACE VIEW public.projects_with_stats AS
+-- 프로젝트 + 최신 태스크 뷰
+CREATE OR REPLACE VIEW project_with_latest_task AS
 SELECT 
     p.*,
-    COUNT(a.id) AS asset_count,
-    COALESCE(SUM(CASE WHEN a.type = 'video' THEN 1 ELSE 0 END), 0) AS video_count,
-    COALESCE(SUM(CASE WHEN a.type = 'image' THEN 1 ELSE 0 END), 0) AS image_count
-FROM public.projects p
-LEFT JOIN public.assets a ON a.project_id = p.id
-GROUP BY p.id;
+    t.task_id AS latest_task_id,
+    t.status AS task_status,
+    t.progress AS task_progress,
+    t.video_url AS task_video_url
+FROM projects p
+LEFT JOIN LATERAL (
+    SELECT *
+    FROM generation_tasks gt
+    WHERE gt.project_id = p.id
+    ORDER BY gt.created_at DESC
+    LIMIT 1
+) t ON true;
+
+
+-- 벤더 통계 뷰
+CREATE OR REPLACE VIEW vendor_stats AS
+SELECT 
+    v.id,
+    v.name,
+    v.is_active,
+    v.total_requests,
+    v.successful_requests,
+    v.failed_requests,
+    CASE 
+        WHEN v.total_requests > 0 
+        THEN ROUND((v.successful_requests::numeric / v.total_requests) * 100, 2)
+        ELSE 0 
+    END AS success_rate
+FROM vendors v;
 
 
 -- ============================================
--- Sample Data (Development Only)
+-- 완료 메시지
 -- ============================================
-
--- Uncomment below for development testing
-/*
-INSERT INTO public.trends (platform, category, title, growth_rate, keywords) VALUES
-    ('youtube', 'entertainment', '숏폼 밈 콘텐츠', 245.00, ARRAY['밈', '숏폼', '반복시청']),
-    ('instagram', 'product', 'ASMR 제품 리뷰', 180.00, ARRAY['ASMR', '언박싱', '감성']),
-    ('tiktok', 'lifestyle', '브이로그 스타일 광고', 156.00, ARRAY['브이로그', '자연스러운', '일상']);
-*/
-
--- ============================================
--- End of Schema
--- ============================================
+-- 스키마 생성이 완료되었습니다.
+-- Supabase 대시보드에서 이 SQL을 실행하거나,
+-- supabase db push 명령어를 사용하세요.

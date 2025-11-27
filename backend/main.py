@@ -1,11 +1,17 @@
 """
 Studio Juai PRO - Main API Server
 =================================
-UNIFIED GOAPI ENGINE - 모든 영상 생성을 GoAPI로 통합
-결제 기능 제거, 심플한 구조
+무인 영상 제작 공장 - FastAPI Backend
+
+Features:
+- AI Director Orchestration (Smart Routing)
+- Hybrid Video Generation (Kling Official + GoAPI)
+- HeyGen Avatar Integration
+- Creatomate Auto-Editing
+- Admin CMS for Prompt/Vendor/Trend Management
 """
 
-from fastapi import FastAPI, HTTPException, BackgroundTasks
+from fastapi import FastAPI, HTTPException, BackgroundTasks, Depends
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 from typing import Optional, List, Dict, Any
@@ -18,20 +24,37 @@ from enum import Enum
 from dotenv import load_dotenv
 
 from factory_engine import (
-    FactoryEngine, GoAPIEngine, CreatomateClient,
-    VideoRequest, VideoResponse, VideoModel, AspectRatio
+    FactoryEngine, GoAPIClient, CreatomateClient, HeyGenClient,
+    VideoRequest, VideoResponse, VideoModel, AspectRatio,
+    AvatarRequest, EditRequest, STYLE_PRESETS,
+    get_factory, get_goapi, get_creatomate
+)
+
+from director import (
+    AIDirector, IntentCategory, ToolType, RoutingDecision,
+    DirectorAnalysis, get_director
 )
 
 load_dotenv()
 
 # ============================================
-# FastAPI App
+# FastAPI App Configuration
 # ============================================
 
 app = FastAPI(
     title="Studio Juai PRO API",
-    description="UNIFIED GOAPI ENGINE - 영상 제작 플랫폼",
-    version="3.0.0"
+    description="""
+    🎬 무인 영상 제작 공장 - AI Director Orchestration
+    
+    Features:
+    - Smart Tool Routing (Veo/Kling/Sora/HeyGen)
+    - Prompt Engineering with Gemini
+    - Hybrid API Engine
+    - Auto-Editing with Creatomate
+    """,
+    version="4.0.0",
+    docs_url="/docs",
+    redoc_url="/redoc"
 )
 
 app.add_middleware(
@@ -43,25 +66,94 @@ app.add_middleware(
 )
 
 # ============================================
-# Global Instances
+# Global State
 # ============================================
 
-factory = FactoryEngine()
-goapi = GoAPIEngine()
-creatomate = CreatomateClient()
-
-# In-memory task store (production: Redis)
+# In-memory stores (Production: Redis/Supabase)
 task_store: Dict[str, Dict[str, Any]] = {}
+project_store: Dict[str, Dict[str, Any]] = {}
+prompt_templates_store: Dict[str, Dict[str, Any]] = {}
+vendor_store: Dict[str, Dict[str, Any]] = {}
+trend_store: List[str] = []
+
+# Initialize on startup
+factory: FactoryEngine = None
+director: AIDirector = None
+goapi: GoAPIClient = None
+creatomate: CreatomateClient = None
+
+@app.on_event("startup")
+async def startup():
+    global factory, director, goapi, creatomate
+    factory = get_factory()
+    director = get_director()
+    goapi = get_goapi()
+    creatomate = get_creatomate()
+    
+    # 기본 프롬프트 템플릿 로드
+    _load_default_templates()
+    print("🚀 [Studio Juai PRO] 서버 시작됨")
+
+
+def _load_default_templates():
+    """기본 프롬프트 템플릿 로드"""
+    global prompt_templates_store
+    
+    prompt_templates_store = {
+        "shopping_mall": {
+            "id": "shopping_mall",
+            "name": "쇼핑몰용 프롬프트",
+            "category": "e-commerce",
+            "system_instruction": "제품의 특징을 부각시키고, 구매 욕구를 자극하는 영상을 만들어주세요. 깔끔한 배경, 제품 클로즈업, 사용 장면을 포함합니다.",
+            "prompt_template": "{product_name}, professional product video, studio lighting, white background, 360 degree rotation, close-up details, lifestyle usage scene",
+            "default_model": "kling",
+            "default_style": "cool_modern"
+        },
+        "movie_trailer": {
+            "id": "movie_trailer",
+            "name": "영화/트레일러용 프롬프트",
+            "category": "entertainment",
+            "system_instruction": "영화적 분위기와 드라마틱한 연출로 시청자의 감정을 자극하는 영상을 만들어주세요.",
+            "prompt_template": "{scene_description}, cinematic, dramatic lighting, anamorphic lens, film grain, epic atmosphere, hollywood quality",
+            "default_model": "sora",
+            "default_style": "cinematic_teal_orange"
+        },
+        "news_report": {
+            "id": "news_report",
+            "name": "뉴스/리포트용 프롬프트",
+            "category": "informational",
+            "system_instruction": "전문적이고 신뢰감 있는 뉴스 리포터 스타일의 영상을 만들어주세요.",
+            "prompt_template": "Professional news presenter, {topic}, broadcast quality, studio setting, teleprompter style delivery",
+            "default_model": "heygen",
+            "default_style": "cool_modern"
+        },
+        "action_sports": {
+            "id": "action_sports",
+            "name": "액션/스포츠용 프롬프트",
+            "category": "action",
+            "system_instruction": "역동적인 움직임과 속도감을 강조하는 영상을 만들어주세요. 물리적으로 정확한 표현이 중요합니다.",
+            "prompt_template": "{action_description}, dynamic movement, high speed, motion blur, FPV shot, tracking shot, photorealistic physics",
+            "default_model": "veo",
+            "default_style": "vibrant"
+        }
+    }
+
 
 # ============================================
 # Request/Response Models
 # ============================================
+
+class AuthRequest(BaseModel):
+    password: str
+
 
 class ChatRequest(BaseModel):
     user_id: str
     message: str
     context: Optional[Dict[str, Any]] = None
     session_id: Optional[str] = None
+    project_id: Optional[str] = None
+
 
 class ChatResponse(BaseModel):
     message: str
@@ -69,19 +161,21 @@ class ChatResponse(BaseModel):
     suggestions: Optional[List[str]] = []
     session_id: str
     action_type: Optional[str] = None
+    routing_decision: Optional[Dict[str, Any]] = None
+
 
 class VideoGenerateRequest(BaseModel):
-    """영상 생성 요청"""
     project_id: str
     prompt: str
-    model: str = "kling"  # kling, veo, sora, hailuo, luma
+    model: str = "auto"  # auto, kling, veo, sora, hailuo, luma
     aspect_ratio: str = "9:16"
     duration: int = 5
     style_preset: str = "warm_film"
     image_url: Optional[str] = None
+    use_director: bool = True  # AI Director 사용 여부
+
 
 class VideoStatusResponse(BaseModel):
-    """영상 상태 응답"""
     success: bool
     project_id: str
     task_id: Optional[str] = None
@@ -90,31 +184,73 @@ class VideoStatusResponse(BaseModel):
     message: str
     video_url: Optional[str] = None
     model: str = ""
+    routing_info: Optional[Dict[str, Any]] = None
+
 
 class ProjectCreateRequest(BaseModel):
     user_id: str
     title: str
+    description: Optional[str] = None
     aspect_ratio: str = "9:16"
     preset: str = "warm_film"
-    model: str = "kling"
-    description: Optional[str] = None
+    model: str = "auto"
 
-class AuthRequest(BaseModel):
-    """관리자 인증 요청"""
-    password: str
 
-class CreatomateEditRequest(BaseModel):
-    """Creatomate 편집 요청"""
+class ProjectResponse(BaseModel):
+    id: str
+    title: str
+    description: Optional[str]
+    aspect_ratio: str
+    preset: str
+    model: str
+    status: str
+    created_at: str
+    video_url: Optional[str] = None
+
+
+class AvatarGenerateRequest(BaseModel):
     project_id: str
-    template_id: str
+    script: str
+    avatar_id: str = "default"
+    voice_id: str = "default"
+    aspect_ratio: str = "9:16"
+
+
+class EditVideoRequest(BaseModel):
+    project_id: str
+    video_url: str
     headline: str
     subheadline: Optional[str] = ""
-    background_video_url: Optional[str] = None
     brand_color: str = "#03C75A"
+    aspect_ratio: str = "9:16"
+    template_id: Optional[str] = None
+
+
+class PromptTemplateRequest(BaseModel):
+    id: str
+    name: str
+    category: str
+    system_instruction: str
+    prompt_template: str
+    default_model: str = "kling"
+    default_style: str = "warm_film"
+
+
+class VendorRequest(BaseModel):
+    id: str
+    name: str
+    api_endpoint: str
+    api_key_env: str
+    model_type: str
+    is_active: bool = True
+
+
+class TrendRequest(BaseModel):
+    trends: List[str]
 
 
 # ============================================
-# Health Check
+# Health & Root Endpoints
 # ============================================
 
 @app.get("/")
@@ -122,9 +258,11 @@ async def root():
     return {
         "status": "active",
         "service": "Studio Juai PRO",
-        "version": "3.0.0",
-        "engine": "UNIFIED GOAPI"
+        "version": "4.0.0",
+        "engine": "AI Director + Hybrid Factory",
+        "timestamp": datetime.utcnow().isoformat()
     }
+
 
 @app.get("/api/health")
 async def health_check():
@@ -132,44 +270,175 @@ async def health_check():
         "status": "healthy",
         "timestamp": datetime.utcnow().isoformat(),
         "services": {
+            "director": "active" if director else "inactive",
             "goapi": "configured" if os.getenv("GOAPI_KEY") else "not_configured",
+            "kling_official": "configured" if os.getenv("KLING_ACCESS_KEY") else "not_configured",
             "gemini": "configured" if os.getenv("GOOGLE_GEMINI_API_KEY") else "not_configured",
             "creatomate": "configured" if os.getenv("CREATOMATE_API_KEY") else "not_configured",
             "heygen": "configured" if os.getenv("HEYGEN_API_KEY") else "not_configured",
             "supabase": "configured" if os.getenv("SUPABASE_URL") else "not_configured",
+        },
+        "features": {
+            "smart_routing": True,
+            "prompt_engineering": True,
+            "auto_editing": True,
+            "avatar_generation": True
         }
     }
 
 
 # ============================================
-# Authentication (Admin Gate)
+# Authentication
 # ============================================
 
 @app.post("/api/auth/login")
 async def admin_login(request: AuthRequest):
-    """관리자 로그인"""
     admin_password = os.getenv("ADMIN_PASSWORD", "studiojuai2024")
     
     if request.password == admin_password:
         return {
             "success": True,
             "message": "로그인 성공",
-            "token": "admin_session_" + str(int(datetime.utcnow().timestamp()))
+            "token": "admin_session_" + str(int(datetime.utcnow().timestamp())),
+            "role": "admin"
         }
     else:
         raise HTTPException(status_code=401, detail="비밀번호가 올바르지 않습니다.")
 
 
 # ============================================
-# Video Generation (UNIFIED GOAPI)
+# AI Director & Chat
+# ============================================
+
+@app.post("/api/chat", response_model=ChatResponse)
+async def chat_with_director(request: ChatRequest):
+    """
+    AI Director와 대화
+    - 의도 분석
+    - 최적 툴 추천
+    - 프롬프트 최적화
+    """
+    
+    session_id = request.session_id or f"session_{int(datetime.utcnow().timestamp())}"
+    
+    try:
+        # AI Director 분석
+        analysis = await director.analyze_intent(request.message, request.context)
+        decision = analysis.final_decision
+        
+        # 응답 메시지 생성
+        tool_name = decision.primary_tool.value.upper()
+        response_message = f"분석 완료! {tool_name}을 사용하여 영상을 생성하겠습니다.\n\n"
+        response_message += f"📌 판단 근거: {decision.reasoning}\n"
+        response_message += f"🎯 신뢰도: {decision.confidence:.0%}\n"
+        
+        if decision.secondary_tool:
+            response_message += f"🔄 보조 툴: {decision.secondary_tool.value.upper()}\n"
+        
+        # 액션 카드 생성
+        action_cards = [
+            {
+                "type": "video_generate",
+                "title": f"{tool_name} 영상 생성",
+                "description": decision.optimized_prompt[:100] + "...",
+                "params": {
+                    "model": decision.primary_tool.value,
+                    "prompt": decision.optimized_prompt,
+                    "style_preset": "warm_film"
+                }
+            }
+        ]
+        
+        # 제안 목록
+        suggestions = [
+            "스타일 변경",
+            "프롬프트 수정",
+            "다른 모델 사용",
+            "BGM 추가"
+        ]
+        
+        return ChatResponse(
+            message=response_message,
+            action_cards=action_cards,
+            suggestions=suggestions,
+            session_id=session_id,
+            action_type="tool_recommendation",
+            routing_decision={
+                "intent": decision.intent.value,
+                "primary_tool": decision.primary_tool.value,
+                "secondary_tool": decision.secondary_tool.value if decision.secondary_tool else None,
+                "confidence": decision.confidence,
+                "optimized_prompt": decision.optimized_prompt
+            }
+        )
+        
+    except Exception as e:
+        print(f"❌ [Chat Error] {e}")
+        return ChatResponse(
+            message=f"죄송합니다, 처리 중 오류가 발생했습니다: {str(e)}",
+            session_id=session_id,
+            action_type="error"
+        )
+
+
+@app.post("/api/director/analyze")
+async def analyze_with_director(request: ChatRequest):
+    """Director 분석 결과 상세 조회"""
+    
+    analysis = await director.analyze_intent(request.message, request.context)
+    
+    return {
+        "success": True,
+        "analysis": {
+            "user_input": analysis.user_input,
+            "detected_keywords": analysis.detected_keywords,
+            "intent_scores": analysis.intent_scores,
+            "decision": {
+                "intent": analysis.final_decision.intent.value,
+                "primary_tool": analysis.final_decision.primary_tool.value,
+                "secondary_tool": analysis.final_decision.secondary_tool.value if analysis.final_decision.secondary_tool else None,
+                "confidence": analysis.final_decision.confidence,
+                "reasoning": analysis.final_decision.reasoning
+            },
+            "prompt_variations": analysis.prompt_variations,
+            "timestamp": analysis.timestamp
+        }
+    }
+
+
+# ============================================
+# Video Generation (Smart Routing)
 # ============================================
 
 @app.post("/api/video/generate", response_model=VideoStatusResponse)
 async def generate_video(request: VideoGenerateRequest, background_tasks: BackgroundTasks):
     """
-    통합 영상 생성 API
-    모든 모델(Kling, Veo, Sora, Hailuo, Luma)이 GoAPI를 통해 처리됨
+    스마트 영상 생성 API
+    - use_director=True: AI Director가 최적 모델 자동 선택
+    - use_director=False: 지정된 모델 사용
     """
+    
+    routing_info = None
+    selected_model = request.model
+    optimized_prompt = request.prompt
+    
+    # AI Director 사용 시 스마트 라우팅
+    if request.use_director and request.model == "auto":
+        print(f"🧠 [Director] 의도 분석 중...")
+        analysis = await director.analyze_intent(request.prompt)
+        decision = analysis.final_decision
+        
+        selected_model = decision.primary_tool.value
+        optimized_prompt = decision.optimized_prompt or request.prompt
+        
+        routing_info = {
+            "intent": decision.intent.value,
+            "selected_model": selected_model,
+            "confidence": decision.confidence,
+            "reasoning": decision.reasoning
+        }
+        
+        print(f"🎯 [Director] 선택된 모델: {selected_model} (신뢰도: {decision.confidence:.0%})")
     
     # 모델 변환
     model_map = {
@@ -178,9 +447,10 @@ async def generate_video(request: VideoGenerateRequest, background_tasks: Backgr
         "sora": VideoModel.SORA,
         "hailuo": VideoModel.HAILUO,
         "luma": VideoModel.LUMA,
+        "auto": VideoModel.KLING
     }
     
-    video_model = model_map.get(request.model.lower(), VideoModel.KLING)
+    video_model = model_map.get(selected_model.lower(), VideoModel.KLING)
     
     # 비율 변환
     ratio_map = {
@@ -195,7 +465,7 @@ async def generate_video(request: VideoGenerateRequest, background_tasks: Backgr
     # VideoRequest 생성
     video_request = VideoRequest(
         project_id=request.project_id,
-        prompt=request.prompt,
+        prompt=optimized_prompt,
         model=video_model,
         aspect_ratio=aspect_ratio,
         duration=request.duration,
@@ -203,30 +473,23 @@ async def generate_video(request: VideoGenerateRequest, background_tasks: Backgr
         image_url=request.image_url,
     )
     
-    # GoAPI 호출
     print(f"🎬 [VIDEO GENERATE] 프로젝트: {request.project_id}")
-    print(f"   모델: {request.model}, 비율: {request.aspect_ratio}")
-    print(f"   프롬프트: {request.prompt[:100]}...")
+    print(f"   모델: {video_model.value}, 비율: {request.aspect_ratio}")
+    print(f"   프롬프트: {optimized_prompt[:100]}...")
     
-    result = await goapi.generate_video(video_request)
+    # Factory Engine으로 생성
+    result = await factory.generate_video(video_request)
     
-    # ❌ 실패 시 명확한 에러 반환 (Demo 모드 없음!)
+    # 실패 시 에러 반환
     if not result.success:
-        error_msg = result.message or "알 수 없는 GoAPI 오류"
-        print(f"❌ [GOAPI ERROR] {error_msg}")
-        raise HTTPException(
-            status_code=500, 
-            detail=f"영상 생성 실패: {error_msg}"
-        )
+        error_msg = result.message or "알 수 없는 오류"
+        print(f"❌ [GENERATE ERROR] {error_msg}")
+        raise HTTPException(status_code=500, detail=f"영상 생성 실패: {error_msg}")
     
     if not result.task_id:
-        print(f"❌ [GOAPI ERROR] task_id 없음")
-        raise HTTPException(
-            status_code=500, 
-            detail="영상 생성 실패: GoAPI에서 task_id를 반환하지 않았습니다."
-        )
+        raise HTTPException(status_code=500, detail="영상 생성 실패: task_id 없음")
     
-    # ✅ 성공 시에만 Task 저장
+    # Task 저장
     task_store[request.project_id] = {
         "task_id": result.task_id,
         "model": video_model,
@@ -234,13 +497,19 @@ async def generate_video(request: VideoGenerateRequest, background_tasks: Backgr
         "progress": 10,
         "video_url": None,
         "error_message": None,
+        "routing_info": routing_info,
         "created_at": datetime.utcnow().isoformat()
     }
     
-    # 백그라운드에서 상태 폴링
-    background_tasks.add_task(poll_video_status, request.project_id, result.task_id, video_model)
+    # 백그라운드 폴링
+    background_tasks.add_task(
+        poll_video_status, 
+        request.project_id, 
+        result.task_id, 
+        video_model
+    )
     
-    print(f"✅ [GOAPI SUCCESS] task_id: {result.task_id}")
+    print(f"✅ [GENERATE SUCCESS] task_id: {result.task_id}")
     
     return VideoStatusResponse(
         success=True,
@@ -248,44 +517,40 @@ async def generate_video(request: VideoGenerateRequest, background_tasks: Backgr
         task_id=result.task_id,
         status="processing",
         progress=10,
-        message=f"{request.model.upper()} 영상 생성이 시작되었습니다.",
-        model=request.model
+        message=f"{video_model.value.upper()} 영상 생성이 시작되었습니다.",
+        model=video_model.value,
+        routing_info=routing_info
     )
 
 
 async def poll_video_status(project_id: str, task_id: str, model: VideoModel):
-    """GoAPI 상태 폴링 - Kling은 3-5분 소요"""
-    max_attempts = 600  # 최대 10분 (충분한 여유)
-    poll_interval = 3   # 3초마다 체크 (서버 부하 감소)
+    """GoAPI/Kling 상태 폴링 - 최대 10분"""
+    max_attempts = 200  # 최대 10분 (3초 * 200)
+    poll_interval = 3
     
     for attempt in range(max_attempts):
         await asyncio.sleep(poll_interval)
         
-        result = await goapi.check_status(task_id, model)
+        result = await factory.check_video_status(task_id, model)
         
         if project_id in task_store:
             task_store[project_id]["status"] = result.status
             task_store[project_id]["progress"] = result.progress
             task_store[project_id]["video_url"] = result.video_url
             
+            elapsed = (attempt + 1) * poll_interval
+            task_store[project_id]["message"] = f"생성 중... ({elapsed}초 경과)"
+            
             if result.status == "completed" and result.video_url:
-                print(f"✅ 영상 생성 완료: {project_id} (URL: {result.video_url})")
                 task_store[project_id]["message"] = "영상 생성 완료!"
+                print(f"✅ 영상 생성 완료: {project_id} (URL: {result.video_url})")
                 break
             elif result.status == "failed":
-                error_msg = result.message or "GoAPI 영상 생성 실패"
+                error_msg = result.message or "영상 생성 실패"
                 task_store[project_id]["error_message"] = error_msg
                 task_store[project_id]["message"] = f"❌ {error_msg}"
                 print(f"❌ 영상 생성 실패: {project_id} - {error_msg}")
                 break
-            else:
-                # 진행 중 메시지 업데이트
-                elapsed = (attempt + 1) * poll_interval
-                task_store[project_id]["message"] = f"생성 중... ({elapsed}초 경과)"
-
-
-# ❌ Demo 모드 완전 삭제 - 가짜 영상 URL 반환하지 않음
-# simulate_video_progress 함수 제거됨
 
 
 @app.get("/api/video/progress/{project_id}", response_model=VideoStatusResponse)
@@ -305,217 +570,547 @@ async def get_video_progress(project_id: str):
         progress=task_data.get("progress", 0),
         message=task_data.get("message", "처리 중..."),
         video_url=task_data.get("video_url"),
-        model=str(task_data.get("model", ""))
+        model=str(task_data.get("model", "")),
+        routing_info=task_data.get("routing_info")
     )
 
 
 # ============================================
-# Supported Models
+# HeyGen Avatar Generation
 # ============================================
 
-@app.get("/api/models")
-async def get_supported_models():
-    """지원하는 영상 생성 모델 목록"""
-    return {
-        "models": [
-            {
-                "id": "kling",
-                "name": "Kling",
-                "description": "고품질 AI 영상 생성",
-                "provider": "GoAPI",
-                "durations": [5, 10],
-                "aspect_ratios": ["16:9", "9:16", "1:1"]
-            },
-            {
-                "id": "veo",
-                "name": "Veo 2",
-                "description": "Google의 최신 영상 AI",
-                "provider": "GoAPI",
-                "durations": [5, 10],
-                "aspect_ratios": ["16:9", "9:16"]
-            },
-            {
-                "id": "sora",
-                "name": "Sora",
-                "description": "OpenAI 영상 생성",
-                "provider": "GoAPI",
-                "durations": [5, 10, 15],
-                "aspect_ratios": ["16:9", "9:16", "1:1"]
-            },
-            {
-                "id": "hailuo",
-                "name": "Hailuo",
-                "description": "빠른 영상 생성",
-                "provider": "GoAPI",
-                "durations": [5],
-                "aspect_ratios": ["16:9", "9:16"]
-            },
-            {
-                "id": "luma",
-                "name": "Luma Dream Machine",
-                "description": "창의적 영상 생성",
-                "provider": "GoAPI",
-                "durations": [5],
-                "aspect_ratios": ["16:9", "9:16", "1:1"]
-            }
-        ]
-    }
-
-
-# ============================================
-# Presets
-# ============================================
-
-@app.get("/api/presets")
-async def get_presets():
-    """iPhone 감성 색감 프리셋 목록"""
-    return {
-        "presets": [
-            {"id": "warm_film", "name": "따뜻한 필름", "emoji": "🎞️"},
-            {"id": "cool_modern", "name": "시원한 모던", "emoji": "❄️"},
-            {"id": "golden_hour", "name": "골든아워", "emoji": "🌅"},
-            {"id": "cinematic_teal_orange", "name": "시네마틱", "emoji": "🎬"},
-        ]
-    }
-
-
-# ============================================
-# Chat (AI Assistant)
-# ============================================
-
-@app.post("/api/chat", response_model=ChatResponse)
-async def chat(request: ChatRequest):
-    """AI 챗봇"""
+@app.post("/api/avatar/generate")
+async def generate_avatar(request: AvatarGenerateRequest, background_tasks: BackgroundTasks):
+    """HeyGen 아바타 영상 생성"""
     
-    session_id = request.session_id or f"session_{int(datetime.utcnow().timestamp())}"
-    
-    # 간단한 의도 분석
-    message = request.message.lower()
-    
-    response_data = {
-        "message": "네, 어떻게 도와드릴까요?",
-        "action_type": "none",
-        "suggestions": ["영상 스타일 변경", "자막 추가", "음악 추가"]
+    ratio_map = {
+        "16:9": AspectRatio.LANDSCAPE,
+        "9:16": AspectRatio.PORTRAIT,
+        "1:1": AspectRatio.SQUARE,
     }
     
-    if "자막" in message or "텍스트" in message:
-        response_data = {
-            "message": "자막을 추가해드릴게요. 잠시만 기다려주세요.",
-            "action_type": "text_add",
-            "suggestions": ["스타일 변경", "음악 추가", "효과 적용"]
-        }
-    elif "음악" in message or "bgm" in message:
-        response_data = {
-            "message": "배경음악을 추가해드릴게요.",
-            "action_type": "music_add",
-            "suggestions": ["자막 추가", "스타일 변경", "효과 적용"]
-        }
-    elif "스타일" in message or "색감" in message:
-        response_data = {
-            "message": "스타일을 변경해드릴게요. 어떤 느낌을 원하세요?",
-            "action_type": "style_change",
-            "suggestions": ["따뜻한 필름", "시원한 모던", "시네마틱"]
-        }
-    elif "효과" in message:
-        response_data = {
-            "message": "효과를 적용해드릴게요.",
-            "action_type": "effect_apply",
-            "suggestions": ["자막 추가", "음악 추가", "스타일 변경"]
-        }
-    
-    return ChatResponse(
-        message=response_data["message"],
-        action_cards=[],
-        suggestions=response_data["suggestions"],
-        session_id=session_id,
-        action_type=response_data["action_type"]
+    avatar_request = AvatarRequest(
+        script=request.script,
+        avatar_id=request.avatar_id,
+        voice_id=request.voice_id,
+        aspect_ratio=ratio_map.get(request.aspect_ratio, AspectRatio.PORTRAIT)
     )
-
-
-# ============================================
-# Creatomate (Video Editing)
-# ============================================
-
-@app.post("/api/creatomate/auto-edit")
-async def auto_edit_video(request: CreatomateEditRequest):
-    """Creatomate 영상 자동 편집"""
     
-    modifications = {
-        "headline": request.headline,
-        "subheadline": request.subheadline,
-        "brand_color": request.brand_color,
-        "filter": "warm_film",
+    result = await factory.create_avatar(avatar_request)
+    
+    if not result.success:
+        raise HTTPException(status_code=500, detail=f"아바타 생성 실패: {result.message}")
+    
+    # Task 저장
+    task_store[request.project_id] = {
+        "task_id": result.task_id,
+        "model": "heygen",
+        "status": "processing",
+        "progress": 10,
+        "video_url": None,
+        "created_at": datetime.utcnow().isoformat()
     }
     
-    if request.background_video_url:
-        modifications["background_video"] = request.background_video_url
+    # 백그라운드 폴링
+    background_tasks.add_task(poll_avatar_status, request.project_id, result.task_id)
     
-    # Creatomate API 호출 시도
-    try:
-        if os.getenv("CREATOMATE_API_KEY"):
-            result = await creatomate.render_video(request.template_id, modifications)
-            if "error" not in result:
-                return {
-                    "success": True,
-                    "project_id": request.project_id,
-                    "render_id": result.get("id"),
-                    "status": "completed",
-                    "video_url": result.get("url"),
-                    "message": "편집이 완료되었습니다."
-                }
-    except Exception as e:
-        print(f"Creatomate 오류: {e}")
-    
-    # Demo 응답
     return {
         "success": True,
         "project_id": request.project_id,
-        "render_id": f"render_{int(datetime.utcnow().timestamp())}",
-        "status": "completed",
-        "video_url": "https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/ForBiggerBlazes.mp4",
-        "message": "자막이 추가되었습니다.",
-        "modifications_applied": modifications
+        "task_id": result.task_id,
+        "status": "processing",
+        "message": "HeyGen 아바타 영상 생성이 시작되었습니다."
+    }
+
+
+async def poll_avatar_status(project_id: str, video_id: str):
+    """HeyGen 상태 폴링"""
+    max_attempts = 120
+    
+    for _ in range(max_attempts):
+        await asyncio.sleep(5)
+        
+        result = await factory.check_avatar_status(video_id)
+        
+        if project_id in task_store:
+            task_store[project_id]["status"] = result.status
+            task_store[project_id]["progress"] = result.progress
+            task_store[project_id]["video_url"] = result.video_url
+            
+            if result.status == "completed":
+                break
+            elif result.status == "failed":
+                break
+
+
+@app.get("/api/avatar/list")
+async def list_avatars():
+    """사용 가능한 아바타 목록"""
+    heygen = HeyGenClient()
+    avatars = await heygen.list_avatars()
+    
+    return {
+        "success": True,
+        "avatars": avatars
     }
 
 
 # ============================================
-# Projects
+# Creatomate Auto-Editing
 # ============================================
 
-@app.post("/api/projects")
+@app.post("/api/creatomate/auto-edit")
+async def auto_edit_video(request: EditVideoRequest, background_tasks: BackgroundTasks):
+    """Creatomate 자동 편집"""
+    
+    ratio_map = {
+        "16:9": AspectRatio.LANDSCAPE,
+        "9:16": AspectRatio.PORTRAIT,
+        "1:1": AspectRatio.SQUARE,
+    }
+    
+    aspect_ratio = ratio_map.get(request.aspect_ratio, AspectRatio.PORTRAIT)
+    
+    result = await creatomate.auto_edit(
+        project_id=request.project_id,
+        video_url=request.video_url,
+        headline=request.headline,
+        subheadline=request.subheadline or "",
+        brand_color=request.brand_color,
+        aspect_ratio=aspect_ratio
+    )
+    
+    if not result.success:
+        raise HTTPException(status_code=500, detail=f"편집 실패: {result.message}")
+    
+    # Task 저장
+    task_store[f"edit_{request.project_id}"] = {
+        "task_id": result.task_id,
+        "model": "creatomate",
+        "status": "processing",
+        "progress": 10,
+        "video_url": None,
+        "created_at": datetime.utcnow().isoformat()
+    }
+    
+    # 백그라운드 폴링
+    background_tasks.add_task(poll_edit_status, request.project_id, result.task_id)
+    
+    return {
+        "success": True,
+        "project_id": request.project_id,
+        "render_id": result.task_id,
+        "status": "processing",
+        "message": "Creatomate 편집이 시작되었습니다."
+    }
+
+
+async def poll_edit_status(project_id: str, render_id: str):
+    """Creatomate 렌더링 상태 폴링"""
+    max_attempts = 60
+    
+    for _ in range(max_attempts):
+        await asyncio.sleep(5)
+        
+        result = await creatomate.check_render_status(render_id)
+        
+        store_key = f"edit_{project_id}"
+        if store_key in task_store:
+            task_store[store_key]["status"] = result.status
+            task_store[store_key]["progress"] = result.progress
+            task_store[store_key]["video_url"] = result.video_url
+            
+            if result.status in ["completed", "failed"]:
+                break
+
+
+@app.get("/api/creatomate/progress/{project_id}")
+async def get_edit_progress(project_id: str):
+    """편집 진행률 조회"""
+    
+    store_key = f"edit_{project_id}"
+    task_data = task_store.get(store_key)
+    
+    if not task_data:
+        raise HTTPException(status_code=404, detail="편집 작업을 찾을 수 없습니다.")
+    
+    return {
+        "success": True,
+        "project_id": project_id,
+        "render_id": task_data.get("task_id"),
+        "status": task_data.get("status", "processing"),
+        "progress": task_data.get("progress", 0),
+        "video_url": task_data.get("video_url")
+    }
+
+
+# ============================================
+# Project Management
+# ============================================
+
+@app.post("/api/projects", response_model=ProjectResponse)
 async def create_project(request: ProjectCreateRequest):
     """새 프로젝트 생성"""
     
     project_id = f"project_{int(datetime.utcnow().timestamp() * 1000)}"
     
-    return {
+    project = {
         "id": project_id,
+        "user_id": request.user_id,
         "title": request.title,
+        "description": request.description,
         "aspect_ratio": request.aspect_ratio,
         "preset": request.preset,
         "model": request.model,
         "status": "idle",
-        "created_at": datetime.utcnow().isoformat()
+        "video_url": None,
+        "created_at": datetime.utcnow().isoformat(),
+        "updated_at": datetime.utcnow().isoformat()
+    }
+    
+    project_store[project_id] = project
+    
+    return ProjectResponse(
+        id=project_id,
+        title=request.title,
+        description=request.description,
+        aspect_ratio=request.aspect_ratio,
+        preset=request.preset,
+        model=request.model,
+        status="idle",
+        created_at=project["created_at"]
+    )
+
+
+@app.get("/api/projects")
+async def list_projects(user_id: Optional[str] = None):
+    """프로젝트 목록 조회"""
+    
+    projects = list(project_store.values())
+    
+    if user_id:
+        projects = [p for p in projects if p.get("user_id") == user_id]
+    
+    return {
+        "success": True,
+        "projects": projects,
+        "total": len(projects)
+    }
+
+
+@app.get("/api/projects/{project_id}")
+async def get_project(project_id: str):
+    """프로젝트 상세 조회"""
+    
+    project = project_store.get(project_id)
+    
+    if not project:
+        raise HTTPException(status_code=404, detail="프로젝트를 찾을 수 없습니다.")
+    
+    # 영상 상태 병합
+    task_data = task_store.get(project_id, {})
+    project["video_status"] = task_data.get("status")
+    project["video_progress"] = task_data.get("progress")
+    project["video_url"] = task_data.get("video_url") or project.get("video_url")
+    
+    return {
+        "success": True,
+        "project": project
     }
 
 
 # ============================================
-# Legacy Support
+# Admin CMS - Prompt Templates
 # ============================================
 
-@app.post("/api/factory/start")
-async def legacy_start(request: Dict[str, Any], background_tasks: BackgroundTasks):
-    """레거시 호환"""
-    gen_request = VideoGenerateRequest(
-        project_id=request.get("project_id", f"legacy_{int(datetime.utcnow().timestamp())}"),
-        prompt=request.get("prompt", "beautiful scene"),
-        model=request.get("model", "kling"),
-        aspect_ratio=request.get("aspect_ratio", "9:16"),
-        duration=request.get("duration", 5),
-        style_preset=request.get("style_preset", "warm_film"),
-    )
-    return await generate_video(gen_request, background_tasks)
+@app.get("/api/admin/templates")
+async def list_prompt_templates():
+    """프롬프트 템플릿 목록"""
+    return {
+        "success": True,
+        "templates": list(prompt_templates_store.values())
+    }
 
+
+@app.get("/api/admin/templates/{template_id}")
+async def get_prompt_template(template_id: str):
+    """프롬프트 템플릿 조회"""
+    
+    template = prompt_templates_store.get(template_id)
+    
+    if not template:
+        raise HTTPException(status_code=404, detail="템플릿을 찾을 수 없습니다.")
+    
+    return {
+        "success": True,
+        "template": template
+    }
+
+
+@app.post("/api/admin/templates")
+async def create_prompt_template(request: PromptTemplateRequest):
+    """프롬프트 템플릿 생성/수정"""
+    
+    template = {
+        "id": request.id,
+        "name": request.name,
+        "category": request.category,
+        "system_instruction": request.system_instruction,
+        "prompt_template": request.prompt_template,
+        "default_model": request.default_model,
+        "default_style": request.default_style,
+        "updated_at": datetime.utcnow().isoformat()
+    }
+    
+    prompt_templates_store[request.id] = template
+    
+    return {
+        "success": True,
+        "message": "템플릿이 저장되었습니다.",
+        "template": template
+    }
+
+
+@app.delete("/api/admin/templates/{template_id}")
+async def delete_prompt_template(template_id: str):
+    """프롬프트 템플릿 삭제"""
+    
+    if template_id not in prompt_templates_store:
+        raise HTTPException(status_code=404, detail="템플릿을 찾을 수 없습니다.")
+    
+    del prompt_templates_store[template_id]
+    
+    return {
+        "success": True,
+        "message": "템플릿이 삭제되었습니다."
+    }
+
+
+# ============================================
+# Admin CMS - Vendor Management
+# ============================================
+
+@app.get("/api/admin/vendors")
+async def list_vendors():
+    """벤더(API) 목록"""
+    
+    # 기본 벤더 목록
+    default_vendors = [
+        {
+            "id": "goapi",
+            "name": "GoAPI (Universal)",
+            "api_endpoint": "https://api.goapi.ai/api/v1",
+            "api_key_env": "GOAPI_KEY",
+            "model_type": "video_generation",
+            "is_active": bool(os.getenv("GOAPI_KEY")),
+            "models": ["kling", "veo", "sora", "hailuo", "luma", "midjourney"]
+        },
+        {
+            "id": "kling_official",
+            "name": "Kling Official",
+            "api_endpoint": "https://api.klingai.com",
+            "api_key_env": "KLING_ACCESS_KEY",
+            "model_type": "video_generation",
+            "is_active": bool(os.getenv("KLING_ACCESS_KEY")),
+            "models": ["kling"]
+        },
+        {
+            "id": "heygen",
+            "name": "HeyGen",
+            "api_endpoint": "https://api.heygen.com",
+            "api_key_env": "HEYGEN_API_KEY",
+            "model_type": "avatar_generation",
+            "is_active": bool(os.getenv("HEYGEN_API_KEY")),
+            "models": ["heygen_avatar"]
+        },
+        {
+            "id": "creatomate",
+            "name": "Creatomate",
+            "api_endpoint": "https://api.creatomate.com/v1",
+            "api_key_env": "CREATOMATE_API_KEY",
+            "model_type": "video_editing",
+            "is_active": bool(os.getenv("CREATOMATE_API_KEY")),
+            "models": ["creatomate_editor"]
+        },
+        {
+            "id": "gemini",
+            "name": "Google Gemini",
+            "api_endpoint": "https://generativelanguage.googleapis.com",
+            "api_key_env": "GOOGLE_GEMINI_API_KEY",
+            "model_type": "ai_brain",
+            "is_active": bool(os.getenv("GOOGLE_GEMINI_API_KEY")),
+            "models": ["gemini-1.5-pro"]
+        }
+    ]
+    
+    # 사용자 정의 벤더 추가
+    all_vendors = default_vendors + list(vendor_store.values())
+    
+    return {
+        "success": True,
+        "vendors": all_vendors
+    }
+
+
+@app.post("/api/admin/vendors")
+async def add_vendor(request: VendorRequest):
+    """새 벤더 추가"""
+    
+    vendor = {
+        "id": request.id,
+        "name": request.name,
+        "api_endpoint": request.api_endpoint,
+        "api_key_env": request.api_key_env,
+        "model_type": request.model_type,
+        "is_active": request.is_active,
+        "created_at": datetime.utcnow().isoformat()
+    }
+    
+    vendor_store[request.id] = vendor
+    
+    return {
+        "success": True,
+        "message": "벤더가 추가되었습니다.",
+        "vendor": vendor
+    }
+
+
+@app.delete("/api/admin/vendors/{vendor_id}")
+async def delete_vendor(vendor_id: str):
+    """벤더 삭제"""
+    
+    if vendor_id not in vendor_store:
+        raise HTTPException(status_code=404, detail="벤더를 찾을 수 없습니다.")
+    
+    del vendor_store[vendor_id]
+    
+    return {
+        "success": True,
+        "message": "벤더가 삭제되었습니다."
+    }
+
+
+# ============================================
+# Admin CMS - Trend Management
+# ============================================
+
+@app.get("/api/admin/trends")
+async def get_trends():
+    """트렌드 목록"""
+    return {
+        "success": True,
+        "trends": trend_store
+    }
+
+
+@app.post("/api/admin/trends")
+async def update_trends(request: TrendRequest):
+    """트렌드 업데이트"""
+    global trend_store
+    
+    trend_store = request.trends
+    
+    return {
+        "success": True,
+        "message": "트렌드가 업데이트되었습니다.",
+        "trends": trend_store
+    }
+
+
+# ============================================
+# Models & Presets Info
+# ============================================
+
+@app.get("/api/models")
+async def list_models():
+    """사용 가능한 모델 목록"""
+    
+    models = factory.get_available_models() if factory else []
+    
+    return {
+        "success": True,
+        "models": models
+    }
+
+
+@app.get("/api/presets")
+async def list_presets():
+    """스타일 프리셋 목록"""
+    
+    presets = []
+    for key, value in STYLE_PRESETS.items():
+        presets.append({
+            "id": key,
+            "name": value["name"],
+            "color_grade": value.get("color_grade"),
+            "vignette": value.get("vignette")
+        })
+    
+    return {
+        "success": True,
+        "presets": presets
+    }
+
+
+# ============================================
+# Utility Endpoints
+# ============================================
+
+@app.post("/api/prompt/optimize")
+async def optimize_prompt(prompt: str, tool: str = "kling"):
+    """프롬프트 최적화"""
+    
+    tool_map = {
+        "kling": ToolType.KLING,
+        "veo": ToolType.VEO,
+        "sora": ToolType.SORA,
+        "midjourney": ToolType.MIDJOURNEY,
+        "heygen": ToolType.HEYGEN,
+        "suno": ToolType.SUNO
+    }
+    
+    tool_type = tool_map.get(tool.lower(), ToolType.KLING)
+    optimized = await director.optimize_prompt_for_tool(prompt, tool_type)
+    
+    return {
+        "success": True,
+        "original": prompt,
+        "optimized": optimized,
+        "tool": tool
+    }
+
+
+@app.post("/api/script/generate")
+async def generate_script(topic: str, style: str = "professional"):
+    """아바타용 스크립트 생성"""
+    
+    script = await director.generate_script_for_avatar(topic, style)
+    
+    return {
+        "success": True,
+        "topic": topic,
+        "style": style,
+        "script": script
+    }
+
+
+@app.post("/api/bgm/suggest")
+async def suggest_bgm(video_description: str, mood: str = "auto"):
+    """BGM 프롬프트 제안"""
+    
+    bgm_prompt = await director.suggest_bgm_prompt(video_description, mood)
+    
+    return {
+        "success": True,
+        "video_description": video_description,
+        "mood": mood,
+        "bgm_prompt": bgm_prompt
+    }
+
+
+# ============================================
+# Run Server
+# ============================================
 
 if __name__ == "__main__":
     import uvicorn
