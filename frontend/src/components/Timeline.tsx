@@ -314,7 +314,7 @@ export default function Timeline({ expanded = false }: TimelineProps) {
                         left: `${(clip.startTime / 1000) * pixelsPerSecond}px`,
                         width: `${Math.max((clip.duration / 1000) * pixelsPerSecond, 50)}px`,
                       }}
-                      whileHover={{ brightness: 1.1 }}
+                      whileHover={{ scale: 1.02, opacity: 1 }}
                       drag={!track.locked ? "x" : false}
                       dragConstraints={timelineRef}
                       dragElastic={0}
