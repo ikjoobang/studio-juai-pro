@@ -1467,6 +1467,36 @@ async def create_prompt_template(request: PromptTemplateRequest):
     }
 
 
+@app.put("/api/admin/templates/{template_id}")
+async def update_prompt_template(template_id: str, request: PromptTemplateRequest):
+    """프롬프트 템플릿 수정 (PUT)"""
+    
+    if template_id not in prompt_templates_store:
+        raise HTTPException(status_code=404, detail="템플릿을 찾을 수 없습니다.")
+    
+    # 기존 데이터 업데이트
+    updated_template = {
+        "id": template_id,  # ID는 변경하지 않음
+        "name": request.name,
+        "category": request.category,
+        "system_instruction": request.system_instruction,
+        "prompt_template": request.prompt_template,
+        "default_model": request.default_model,
+        "default_style": request.default_style,
+        "updated_at": datetime.utcnow().isoformat()
+    }
+    
+    prompt_templates_store[template_id] = updated_template
+    
+    print(f"✅ [Admin] 템플릿 수정됨: {template_id}")
+    
+    return {
+        "success": True,
+        "message": "템플릿이 수정되었습니다.",
+        "template": updated_template
+    }
+
+
 @app.delete("/api/admin/templates/{template_id}")
 async def delete_prompt_template(template_id: str):
     """프롬프트 템플릿 삭제"""
@@ -1475,6 +1505,8 @@ async def delete_prompt_template(template_id: str):
         raise HTTPException(status_code=404, detail="템플릿을 찾을 수 없습니다.")
     
     del prompt_templates_store[template_id]
+    
+    print(f"🗑️ [Admin] 템플릿 삭제됨: {template_id}")
     
     return {
         "success": True,

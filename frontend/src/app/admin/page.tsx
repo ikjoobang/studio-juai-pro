@@ -55,7 +55,8 @@ import {
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 
-const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
+// API Base URL - Railway Production (하드코딩)
+const API_BASE_URL = "https://studio-juai-pro-production.up.railway.app";
 
 // ============================================
 // Types
@@ -139,21 +140,41 @@ export default function AdminPage() {
     }
   };
 
-  const saveTemplate = async (template: PromptTemplate) => {
+  const saveTemplate = async (template: PromptTemplate, isEditing: boolean = false) => {
     try {
-      const response = await fetch(`${API_BASE_URL}/api/admin/templates`, {
-        method: "POST",
+      // 기존 템플릿 수정 시 PUT, 새 템플릿 생성 시 POST
+      const url = isEditing 
+        ? `${API_BASE_URL}/api/admin/templates/${template.id}`
+        : `${API_BASE_URL}/api/admin/templates`;
+      
+      const method = isEditing ? "PUT" : "POST";
+      
+      console.log(`📝 [Admin] ${isEditing ? "수정" : "생성"} 요청:`, template.id);
+      
+      const response = await fetch(url, {
+        method,
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(template),
       });
 
       if (response.ok) {
+        const data = await response.json();
+        console.log(`✅ [Admin] 템플릿 ${isEditing ? "수정" : "생성"} 성공:`, data);
+        
+        // 리스트 자동 새로고침
         await fetchTemplates();
         setIsTemplateDialogOpen(false);
         setEditingTemplate(null);
+        
+        alert(`템플릿이 ${isEditing ? "수정" : "생성"}되었습니다.`);
+      } else {
+        const errorData = await response.json().catch(() => ({}));
+        console.error("Failed to save template:", errorData);
+        alert(`저장 실패: ${errorData.detail || response.statusText}`);
       }
     } catch (error) {
       console.error("Failed to save template:", error);
+      alert("네트워크 오류가 발생했습니다.");
     }
   };
 
@@ -559,7 +580,13 @@ export default function AdminPage() {
                       </Button>
                       <Button
                         className="bg-[#03C75A] hover:bg-[#02a84d]"
-                        onClick={() => editingTemplate && saveTemplate(editingTemplate)}
+                        onClick={() => {
+                          if (editingTemplate) {
+                            // 기존 템플릿에 updated_at이 있으면 수정 모드
+                            const isEditing = Boolean(editingTemplate.updated_at);
+                            saveTemplate(editingTemplate, isEditing);
+                          }
+                        }}
                       >
                         <Save className="w-4 h-4 mr-2" />
                         저장
@@ -584,18 +611,18 @@ export default function AdminPage() {
                         <div className="flex items-start justify-between">
                           <div className="flex-1">
                             <div className="flex items-center gap-2 mb-2">
-                              <h3 className="font-medium">{template.name}</h3>
-                              <Badge variant="outline" className="border-[#333]">
+                              <h3 className="font-medium text-white">{template.name}</h3>
+                              <Badge variant="outline" className="border-[#555] text-gray-300">
                                 {template.category}
                               </Badge>
                               <Badge className="bg-blue-500/20 text-blue-400">
                                 {template.default_model}
                               </Badge>
                             </div>
-                            <p className="text-sm text-gray-400 mb-2">
+                            <p className="text-sm text-gray-300 mb-2">
                               {template.system_instruction.slice(0, 150)}...
                             </p>
-                            <code className="text-xs bg-[#1a1a1a] px-2 py-1 rounded">
+                            <code className="text-xs bg-[#1a1a1a] px-2 py-1 rounded text-gray-300">
                               {template.prompt_template.slice(0, 100)}...
                             </code>
                           </div>
@@ -811,15 +838,15 @@ export default function AdminPage() {
                           />
                           <div>
                             <div className="flex items-center gap-2">
-                              <h3 className="font-medium">{vendor.name}</h3>
-                              <Badge variant="outline" className="border-[#333]">
+                              <h3 className="font-medium text-white">{vendor.name}</h3>
+                              <Badge variant="outline" className="border-[#555] text-gray-300">
                                 {vendor.model_type}
                               </Badge>
                             </div>
-                            <p className="text-sm text-gray-500">
+                            <p className="text-sm text-gray-300">
                               {vendor.api_endpoint}
                             </p>
-                            <p className="text-xs text-gray-600">
+                            <p className="text-xs text-gray-400">
                               Env: {vendor.api_key_env}
                             </p>
                             {vendor.models && (
