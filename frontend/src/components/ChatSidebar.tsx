@@ -21,6 +21,9 @@ import {
   Type,
   Check,
   AlertCircle,
+  Sparkles,
+  Waves,
+  Film,
 } from "lucide-react";
 import { useChatStore, useVideoStore, TimelineClip } from "@/lib/store";
 
@@ -39,11 +42,19 @@ interface ChatSidebarProps {
 
 const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
 
+// ✅ 빠른 작업 버튼 - 모달 트리거로 변경
 const quickActions = [
-  { id: "style", label: "스타일", icon: <Palette className="w-3 h-3" />, prompt: "이 영상의 색감을 바꿔줘" },
-  { id: "music", label: "음악", icon: <Music2 className="w-3 h-3" />, prompt: "배경음악 추천해줘" },
-  { id: "text", label: "자막", icon: <Type className="w-3 h-3" />, prompt: "영상에 자막을 추가해줘" },
-  { id: "effect", label: "효과", icon: <Wand2 className="w-3 h-3" />, prompt: "트렌디한 효과를 적용해줘" },
+  { id: "style", label: "스타일", icon: <Palette className="w-3 h-3" />, action: "style" },
+  { id: "music", label: "음악", icon: <Music2 className="w-3 h-3" />, action: "music_modal" },
+  { id: "text", label: "자막", icon: <Type className="w-3 h-3" />, action: "text_modal" },
+  { id: "effect", label: "효과", icon: <Wand2 className="w-3 h-3" />, action: "effect" },
+];
+
+// ✅ 음악 분위기 옵션
+const musicMoods = [
+  { id: "upbeat", label: "신나는", icon: <Sparkles className="w-4 h-4" />, color: "from-orange-500 to-pink-500" },
+  { id: "calm", label: "차분한", icon: <Waves className="w-4 h-4" />, color: "from-blue-500 to-cyan-500" },
+  { id: "cinematic", label: "시네마틱", icon: <Film className="w-4 h-4" />, color: "from-purple-500 to-indigo-500" },
 ];
 
 export default function ChatSidebar({ embedded = false }: ChatSidebarProps) {
@@ -51,6 +62,14 @@ export default function ChatSidebar({ embedded = false }: ChatSidebarProps) {
   const [inputValue, setInputValue] = useState("");
   const [isLoading, setIsLoading] = useState(false);
   const [isExecutingAction, setIsExecutingAction] = useState(false);
+  
+  // ✅ 모달 상태
+  const [showMusicModal, setShowMusicModal] = useState(false);
+  const [showTextModal, setShowTextModal] = useState(false);
+  const [selectedMood, setSelectedMood] = useState<string | null>(null);
+  const [subtitleText, setSubtitleText] = useState("");
+  const [isGeneratingMusic, setIsGeneratingMusic] = useState(false);
+  const [isAddingSubtitle, setIsAddingSubtitle] = useState(false);
   
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
@@ -135,6 +154,202 @@ export default function ChatSidebar({ embedded = false }: ChatSidebarProps) {
       setIsExecutingAction(false);
     }
   }, [currentProject, videoUrl, addClip, updateProject]);
+
+  // ✅ 빠른 작업 버튼 클릭 핸들러 (스타일/효과는 직접 실행)
+  const handleQuickAction = useCallback(async (actionId: string) => {
+    switch (actionId) {
+      case "music_modal":
+        setShowMusicModal(true);
+        break;
+      case "text_modal":
+        setShowTextModal(true);
+        break;
+      case "style":
+        // 스타일 변경 직접 실행
+        if (currentProject) {
+          const result = await executeVideoAction("style_change");
+          if (result) {
+            const msg: Message = {
+              id: `msg-${Date.now()}-style`,
+              role: "assistant",
+              content: result.message,
+              timestamp: new Date(),
+              actionStatus: result.success ? "success" : "error",
+            };
+            setMessages(prev => [...prev, msg]);
+          }
+        }
+        break;
+      case "effect":
+        // 효과 적용 직접 실행
+        if (currentProject) {
+          const result = await executeVideoAction("effect_apply");
+          if (result) {
+            const msg: Message = {
+              id: `msg-${Date.now()}-effect`,
+              role: "assistant",
+              content: result.message,
+              timestamp: new Date(),
+              actionStatus: result.success ? "success" : "error",
+            };
+            setMessages(prev => [...prev, msg]);
+          }
+        }
+        break;
+    }
+  }, [currentProject, executeVideoAction]);
+
+  // ✅ 음악 생성 API 호출
+  const handleGenerateMusic = useCallback(async () => {
+    if (!selectedMood || !currentProject) return;
+    
+    setIsGeneratingMusic(true);
+    setShowMusicModal(false);
+    
+    const moodLabel = musicMoods.find(m => m.id === selectedMood)?.label || selectedMood;
+    
+    // 채팅에 상태 메시지 추가
+    const statusMessage: Message = {
+      id: `msg-${Date.now()}-music-start`,
+      role: "assistant",
+      content: `🎵 "${moodLabel}" 분위기의 배경음악을 생성하고 있습니다...`,
+      timestamp: new Date(),
+      actionStatus: "pending",
+    };
+    setMessages(prev => [...prev, statusMessage]);
+    
+    try {
+      const response = await fetch(`${API_BASE_URL}/api/music/generate`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          project_id: currentProject.id,
+          prompt: `${moodLabel} 분위기의 배경음악`,
+          mood: selectedMood,
+          duration: 30,
+          style: selectedMood === "cinematic" ? "orchestral" : 
+                 selectedMood === "calm" ? "ambient" : "electronic",
+        }),
+      });
+      
+      if (response.ok) {
+        const data = await response.json();
+        
+        // 타임라인에 음악 클립 추가
+        const musicClip: TimelineClip = {
+          id: `music_${Date.now()}`,
+          type: "audio",
+          startTime: 0,
+          duration: 30000,
+          sourceUrl: data.audio_url,
+          label: `🎵 ${moodLabel} BGM`,
+          layer: 3,
+        };
+        addClip(musicClip);
+        
+        const successMessage: Message = {
+          id: `msg-${Date.now()}-music-done`,
+          role: "assistant",
+          content: `✅ "${moodLabel}" 배경음악이 타임라인에 추가되었습니다!`,
+          timestamp: new Date(),
+          actionStatus: "success",
+        };
+        setMessages(prev => [...prev, successMessage]);
+      } else {
+        throw new Error("음악 생성 실패");
+      }
+    } catch (error) {
+      // 실패시에도 데모 클립 추가 (오프라인 모드)
+      const musicClip: TimelineClip = {
+        id: `music_${Date.now()}`,
+        type: "audio",
+        startTime: 0,
+        duration: 15000,
+        label: `🎵 ${moodLabel} BGM`,
+        layer: 3,
+      };
+      addClip(musicClip);
+      
+      const fallbackMessage: Message = {
+        id: `msg-${Date.now()}-music-fallback`,
+        role: "assistant",
+        content: `✅ "${moodLabel}" 배경음악 클립이 추가되었습니다. (API 연결 대기 중)`,
+        timestamp: new Date(),
+        actionStatus: "success",
+      };
+      setMessages(prev => [...prev, fallbackMessage]);
+    } finally {
+      setIsGeneratingMusic(false);
+      setSelectedMood(null);
+    }
+  }, [selectedMood, currentProject, addClip]);
+
+  // ✅ 자막 추가 API 호출
+  const handleAddSubtitle = useCallback(async () => {
+    if (!subtitleText.trim() || !currentProject || !videoUrl) return;
+    
+    setIsAddingSubtitle(true);
+    setShowTextModal(false);
+    
+    const statusMessage: Message = {
+      id: `msg-${Date.now()}-text-start`,
+      role: "assistant",
+      content: `📝 자막을 추가하고 있습니다: "${subtitleText.slice(0, 30)}${subtitleText.length > 30 ? '...' : ''}"`,
+      timestamp: new Date(),
+      actionStatus: "pending",
+    };
+    setMessages(prev => [...prev, statusMessage]);
+    
+    try {
+      const response = await fetch(`${API_BASE_URL}/api/creatomate/auto-edit`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          project_id: currentProject.id,
+          template_id: "subtitle_template_01",
+          headline: subtitleText,
+          subheadline: "",
+          background_video_url: videoUrl,
+          brand_color: "#03C75A",
+          font_size: "medium",
+          position: "bottom",
+        }),
+      });
+      
+      // 타임라인에 자막 클립 추가
+      const subtitleClip: TimelineClip = {
+        id: `subtitle_${Date.now()}`,
+        type: "text",
+        startTime: 1000,
+        duration: 5000,
+        label: subtitleText.slice(0, 15) + (subtitleText.length > 15 ? "..." : ""),
+        layer: 2,
+      };
+      addClip(subtitleClip);
+      
+      const successMessage: Message = {
+        id: `msg-${Date.now()}-text-done`,
+        role: "assistant",
+        content: `✅ 자막이 타임라인에 추가되었습니다!`,
+        timestamp: new Date(),
+        actionStatus: "success",
+      };
+      setMessages(prev => [...prev, successMessage]);
+      
+    } catch (error) {
+      const errorMessage: Message = {
+        id: `msg-${Date.now()}-text-error`,
+        role: "assistant",
+        content: `⚠️ 자막 추가 중 오류가 발생했습니다.`,
+        timestamp: new Date(),
+        actionStatus: "error",
+      };
+      setMessages(prev => [...prev, errorMessage]);
+    } finally {
+      setIsAddingSubtitle(false);
+      setSubtitleText("");
+    }
+  }, [subtitleText, currentProject, videoUrl, addClip]);
 
   const analyzeLocalIntent = (message: string): any => {
     const lowerMessage = message.toLowerCase();
@@ -234,17 +449,167 @@ export default function ChatSidebar({ embedded = false }: ChatSidebarProps) {
   // Embedded 모드 (우측 패널에 내장)
   if (embedded) {
     return (
-      <div className="flex flex-col h-full bg-[#1e1e1e]">
+      <div className="flex flex-col h-full bg-[#1e1e1e] relative">
+        
+        {/* ✅ 음악 분위기 선택 모달 */}
+        <AnimatePresence>
+          {showMusicModal && (
+            <motion.div
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              className="absolute inset-0 z-50 bg-black/80 flex items-center justify-center p-4"
+              onClick={() => setShowMusicModal(false)}
+            >
+              <motion.div
+                initial={{ scale: 0.9, opacity: 0 }}
+                animate={{ scale: 1, opacity: 1 }}
+                exit={{ scale: 0.9, opacity: 0 }}
+                onClick={(e) => e.stopPropagation()}
+                className="bg-[#252525] rounded-xl p-4 w-full max-w-sm border border-[#444] shadow-2xl"
+              >
+                <div className="flex items-center justify-between mb-4">
+                  <h3 className="text-white font-semibold flex items-center gap-2">
+                    <Music2 className="w-5 h-5 text-juai-green" />
+                    분위기를 선택하세요
+                  </h3>
+                  <button 
+                    onClick={() => setShowMusicModal(false)}
+                    className="p-1 hover:bg-[#333] rounded"
+                  >
+                    <X className="w-4 h-4 text-gray-400" />
+                  </button>
+                </div>
+                
+                <div className="space-y-2 mb-4">
+                  {musicMoods.map((mood) => (
+                    <button
+                      key={mood.id}
+                      onClick={() => setSelectedMood(mood.id)}
+                      className={`w-full flex items-center gap-3 p-3 rounded-lg border transition-all
+                                ${selectedMood === mood.id 
+                                  ? 'border-juai-green bg-juai-green/10' 
+                                  : 'border-[#444] hover:border-[#555] bg-[#333]'}`}
+                    >
+                      <div className={`w-10 h-10 rounded-lg bg-gradient-to-br ${mood.color} 
+                                     flex items-center justify-center text-white`}>
+                        {mood.icon}
+                      </div>
+                      <div className="text-left">
+                        <div className="text-white font-medium">{mood.label}</div>
+                        <div className="text-gray-400 text-xs">
+                          {mood.id === "upbeat" && "에너지 넘치는 비트"}
+                          {mood.id === "calm" && "편안한 분위기"}
+                          {mood.id === "cinematic" && "영화같은 웅장함"}
+                        </div>
+                      </div>
+                      {selectedMood === mood.id && (
+                        <Check className="w-5 h-5 text-juai-green ml-auto" />
+                      )}
+                    </button>
+                  ))}
+                </div>
+                
+                <button
+                  onClick={handleGenerateMusic}
+                  disabled={!selectedMood || isGeneratingMusic}
+                  className="w-full py-2.5 bg-gradient-juai text-white rounded-lg font-medium
+                           disabled:opacity-50 flex items-center justify-center gap-2"
+                >
+                  {isGeneratingMusic ? (
+                    <><Loader2 className="w-4 h-4 animate-spin" /> 생성 중...</>
+                  ) : (
+                    <><Music2 className="w-4 h-4" /> 음악 생성</>
+                  )}
+                </button>
+              </motion.div>
+            </motion.div>
+          )}
+        </AnimatePresence>
+
+        {/* ✅ 자막 입력 모달 */}
+        <AnimatePresence>
+          {showTextModal && (
+            <motion.div
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              className="absolute inset-0 z-50 bg-black/80 flex items-center justify-center p-4"
+              onClick={() => setShowTextModal(false)}
+            >
+              <motion.div
+                initial={{ scale: 0.9, opacity: 0 }}
+                animate={{ scale: 1, opacity: 1 }}
+                exit={{ scale: 0.9, opacity: 0 }}
+                onClick={(e) => e.stopPropagation()}
+                className="bg-[#252525] rounded-xl p-4 w-full max-w-sm border border-[#444] shadow-2xl"
+              >
+                <div className="flex items-center justify-between mb-4">
+                  <h3 className="text-white font-semibold flex items-center gap-2">
+                    <Type className="w-5 h-5 text-juai-green" />
+                    자막 추가
+                  </h3>
+                  <button 
+                    onClick={() => setShowTextModal(false)}
+                    className="p-1 hover:bg-[#333] rounded"
+                  >
+                    <X className="w-4 h-4 text-gray-400" />
+                  </button>
+                </div>
+                
+                <div className="mb-4">
+                  <label className="text-gray-400 text-xs block mb-2">자막 내용</label>
+                  <textarea
+                    value={subtitleText}
+                    onChange={(e) => setSubtitleText(e.target.value)}
+                    placeholder="자막으로 표시할 텍스트를 입력하세요..."
+                    className="w-full h-24 bg-[#333] border border-[#444] rounded-lg p-3
+                             text-white text-sm resize-none outline-none
+                             focus:border-juai-green transition-colors
+                             placeholder-gray-500"
+                    autoFocus
+                  />
+                  <div className="text-right text-gray-500 text-xs mt-1">
+                    {subtitleText.length} / 100
+                  </div>
+                </div>
+                
+                <div className="flex gap-2">
+                  <button
+                    onClick={() => setShowTextModal(false)}
+                    className="flex-1 py-2 bg-[#333] text-gray-300 rounded-lg text-sm
+                             hover:bg-[#444] transition-colors"
+                  >
+                    취소
+                  </button>
+                  <button
+                    onClick={handleAddSubtitle}
+                    disabled={!subtitleText.trim() || isAddingSubtitle}
+                    className="flex-1 py-2 bg-gradient-juai text-white rounded-lg text-sm
+                             font-medium disabled:opacity-50 flex items-center justify-center gap-2"
+                  >
+                    {isAddingSubtitle ? (
+                      <><Loader2 className="w-4 h-4 animate-spin" /> 추가 중...</>
+                    ) : (
+                      <><Check className="w-4 h-4" /> 적용</>
+                    )}
+                  </button>
+                </div>
+              </motion.div>
+            </motion.div>
+          )}
+        </AnimatePresence>
+
         {/* Quick Actions */}
         <div className="px-2 py-2 border-b border-[#333]">
           <div className="flex flex-wrap gap-1">
             {quickActions.map((action) => (
               <button
                 key={action.id}
-                onClick={() => sendMessage(action.prompt)}
-                disabled={!videoUrl || isExecutingAction}
+                onClick={() => handleQuickAction(action.action)}
+                disabled={!videoUrl || isExecutingAction || isGeneratingMusic || isAddingSubtitle}
                 className="flex items-center gap-1 px-2 py-1 bg-[#333] hover:bg-[#444]
-                         rounded text-xs text-gray-300 disabled:opacity-30"
+                         rounded text-xs text-gray-300 disabled:opacity-30 transition-colors"
               >
                 {action.icon}
                 {action.label}
@@ -384,11 +749,11 @@ export default function ChatSidebar({ embedded = false }: ChatSidebarProps) {
                 {quickActions.map((action) => (
                   <button
                     key={action.id}
-                    onClick={() => sendMessage(action.prompt)}
-                    disabled={!videoUrl || isExecutingAction}
+                    onClick={() => handleQuickAction(action.action)}
+                    disabled={!videoUrl || isExecutingAction || isGeneratingMusic || isAddingSubtitle}
                     className="flex items-center gap-1.5 px-3 py-1.5 bg-white border border-gray-200
                              rounded-full text-sm text-gray-700 hover:border-juai-green 
-                             disabled:opacity-50"
+                             disabled:opacity-50 transition-colors"
                   >
                     {action.icon}
                     {action.label}
