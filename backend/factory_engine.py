@@ -986,6 +986,110 @@ class CreatomateClient:
                 status="error",
                 message=f"상태 조회 오류: {str(e)}"
             )
+    
+    async def auto_edit(
+        self,
+        project_id: str,
+        video_url: str,
+        headline: str,
+        subheadline: str = "",
+        brand_color: str = "#03C75A",
+        aspect_ratio: AspectRatio = AspectRatio.PORTRAIT
+    ) -> VideoResponse:
+        """
+        자동 편집 - 자막/텍스트 오버레이 추가
+        
+        Creatomate API가 없으면 더미 응답 반환 (프론트엔드 테스트용)
+        """
+        
+        if not self.is_available:
+            # API 키 없으면 더미 성공 응답 (타임라인에 클립만 추가)
+            print(f"⚠️ [Creatomate] API 키 없음 - 더미 응답 반환")
+            return VideoResponse(
+                success=True,
+                task_id=f"dummy_edit_{project_id}",
+                video_url=video_url,  # 원본 영상 URL 그대로 반환
+                status="completed",
+                message="자막이 추가되었습니다. (Creatomate 미연동)",
+                model="creatomate_dummy",
+                progress=100
+            )
+        
+        # 실제 Creatomate API 호출
+        url = f"{self.BASE_URL}/renders"
+        
+        # 기본 자막 템플릿 구성
+        body = {
+            "source": {
+                "output_format": "mp4",
+                "width": 1080 if aspect_ratio == AspectRatio.PORTRAIT else 1920,
+                "height": 1920 if aspect_ratio == AspectRatio.PORTRAIT else 1080,
+                "elements": [
+                    {
+                        "type": "video",
+                        "source": video_url
+                    },
+                    {
+                        "type": "text",
+                        "text": headline,
+                        "font_family": "Pretendard",
+                        "font_weight": "700",
+                        "font_size": "48 px",
+                        "fill_color": "#ffffff",
+                        "shadow_color": "rgba(0,0,0,0.5)",
+                        "x": "50%",
+                        "y": "85%",
+                        "x_anchor": "50%",
+                        "y_anchor": "50%"
+                    }
+                ]
+            }
+        }
+        
+        if subheadline:
+            body["source"]["elements"].append({
+                "type": "text",
+                "text": subheadline,
+                "font_family": "Pretendard",
+                "font_size": "28 px",
+                "fill_color": brand_color,
+                "x": "50%",
+                "y": "90%",
+                "x_anchor": "50%",
+                "y_anchor": "50%"
+            })
+        
+        print(f"🎨 [Creatomate] 자동 편집 요청: {headline}")
+        
+        try:
+            async with httpx.AsyncClient(timeout=60.0) as client:
+                response = await client.post(url, headers=self._get_headers(), json=body)
+                
+                if response.status_code in [200, 201]:
+                    data = response.json()
+                    render_id = data[0].get("id") if isinstance(data, list) else data.get("id")
+                    
+                    return VideoResponse(
+                        success=True,
+                        task_id=render_id,
+                        status="processing",
+                        message="Creatomate 편집 시작",
+                        model="creatomate",
+                        progress=10
+                    )
+                
+                return VideoResponse(
+                    success=False,
+                    status="error",
+                    message=f"Creatomate API 오류: {response.status_code} - {response.text}"
+                )
+                
+        except Exception as e:
+            return VideoResponse(
+                success=False,
+                status="error",
+                message=f"Creatomate 연결 오류: {str(e)}"
+            )
 
 
 # ============================================

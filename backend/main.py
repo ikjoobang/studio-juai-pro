@@ -1058,7 +1058,7 @@ async def auto_edit_video(request: EditVideoRequest, background_tasks: Backgroun
     
     aspect_ratio = ratio_map.get(request.aspect_ratio, AspectRatio.PORTRAIT)
     
-    result = await creatomate.auto_edit(
+    result = await factory.creatomate.auto_edit(
         project_id=request.project_id,
         video_url=request.video_url,
         headline=request.headline,
@@ -1099,7 +1099,7 @@ async def poll_edit_status(project_id: str, render_id: str):
     for _ in range(max_attempts):
         await asyncio.sleep(5)
         
-        result = await creatomate.check_render_status(render_id)
+        result = await factory.creatomate.check_render_status(render_id)
         
         store_key = f"edit_{project_id}"
         if store_key in task_store:
