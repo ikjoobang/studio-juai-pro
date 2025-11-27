@@ -301,19 +301,31 @@ class GoAPIEngine:
                     progress = 50
                     
                     # 상태별 처리
+                    output = task_data.get("output", {})
+                    output_status = output.get("status", 0)
+                    
                     if status == "completed" or status == "succeed":
-                        # 비디오 URL 추출
-                        output = task_data.get("output", {})
+                        # 비디오 URL 추출 (GoAPI 2024 형식)
                         works = output.get("works", [])
                         if works:
-                            video_url = works[0].get("resource", {}).get("resource")
+                            # video.resource 또는 resource.resource 둘 다 체크
+                            work = works[0]
+                            video_url = (
+                                work.get("video", {}).get("resource") or
+                                work.get("video", {}).get("resource_without_watermark") or
+                                work.get("resource", {}).get("resource")
+                            )
                         
                         progress = 100
                         status = "completed"
+                        print(f"✅ [VIDEO COMPLETE] URL: {video_url}")
                     elif status == "failed":
+                        error_info = task_data.get("error", {})
+                        print(f"❌ [VIDEO FAILED] {error_info}")
                         progress = 0
                     elif status == "processing":
-                        progress = 50
+                        # output.status로 세부 진행률 계산 (0-100)
+                        progress = min(90, max(20, output_status))
                     elif status == "pending":
                         progress = 10
                     
