@@ -254,11 +254,12 @@ async def generate_video(request: VideoGenerateRequest, background_tasks: Backgr
 
 
 async def poll_video_status(project_id: str, task_id: str, model: VideoModel):
-    """GoAPI 상태 폴링"""
-    max_attempts = 120  # 최대 2분
+    """GoAPI 상태 폴링 - Kling은 3-5분 소요"""
+    max_attempts = 600  # 최대 10분 (충분한 여유)
+    poll_interval = 3   # 3초마다 체크 (서버 부하 감소)
     
-    for _ in range(max_attempts):
-        await asyncio.sleep(1)
+    for attempt in range(max_attempts):
+        await asyncio.sleep(poll_interval)
         
         result = await goapi.check_status(task_id, model)
         
@@ -268,11 +269,19 @@ async def poll_video_status(project_id: str, task_id: str, model: VideoModel):
             task_store[project_id]["video_url"] = result.video_url
             
             if result.status == "completed" and result.video_url:
-                print(f"✅ 영상 생성 완료: {project_id}")
+                print(f"✅ 영상 생성 완료: {project_id} (URL: {result.video_url})")
+                task_store[project_id]["message"] = "영상 생성 완료!"
                 break
             elif result.status == "failed":
-                print(f"❌ 영상 생성 실패: {project_id}")
+                error_msg = result.message or "GoAPI 영상 생성 실패"
+                task_store[project_id]["error_message"] = error_msg
+                task_store[project_id]["message"] = f"❌ {error_msg}"
+                print(f"❌ 영상 생성 실패: {project_id} - {error_msg}")
                 break
+            else:
+                # 진행 중 메시지 업데이트
+                elapsed = (attempt + 1) * poll_interval
+                task_store[project_id]["message"] = f"생성 중... ({elapsed}초 경과)"
 
 
 # ❌ Demo 모드 완전 삭제 - 가짜 영상 URL 반환하지 않음
