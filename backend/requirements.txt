@@ -1,4 +1,4 @@
-# Super Agent Platform - Backend Dependencies
+# Studio Juai PRO - Backend Dependencies
 # Python 3.11+
 
 # Web Framework
@@ -11,9 +11,17 @@ supabase>=2.3.0
 
 # HTTP Client
 httpx>=0.26.0
+aiohttp>=3.9.0
 
 # Data Validation
 pydantic>=2.5.0
 
 # Utilities
 python-dotenv>=1.0.0
+
+# Video Processing (Optional - for local processing)
+# moviepy>=1.0.3
+# ffmpeg-python>=0.2.0
+
+# AI/ML
+google-generativeai>=0.3.0
