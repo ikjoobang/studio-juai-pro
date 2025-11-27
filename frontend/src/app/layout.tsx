@@ -3,7 +3,7 @@ import { Toaster } from "react-hot-toast";
 import "./globals.css";
 
 export const metadata: Metadata = {
-  title: "Studio Juai PRO | Admin",
+  title: "Studio Juai PRO | Dashboard",
   description: "AI 기반 영상 제작 플랫폼 - 통합 GoAPI 엔진",
   keywords: ["AI", "영상 제작", "GoAPI", "Kling", "Veo", "Sora", "Studio Juai"],
   authors: [{ name: "Studio Juai" }],
@@ -23,7 +23,7 @@ export default function RootLayout({
   return (
     <html lang="ko" suppressHydrationWarning>
       <head>
-        <link rel="icon" href="/favicon.ico" />
+        <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
         <link
           rel="preconnect"
           href="https://cdn.jsdelivr.net"

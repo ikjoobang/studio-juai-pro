@@ -175,6 +175,9 @@ export default function DashboardPage() {
   const [timelineClips, setTimelineClips] = useState<TimelineClip[]>([]);
   const [timelineZoom, setTimelineZoom] = useState(1);
 
+  // Client-side mount check (prevents hydration mismatch)
+  const [isClient, setIsClient] = useState(false);
+
   // Chat State
   const [chatMessages, setChatMessages] = useState<ChatMessage[]>([]);
   const [chatInput, setChatInput] = useState("");
@@ -659,6 +662,9 @@ export default function DashboardPage() {
   // ============================================
 
   useEffect(() => {
+    // Mark as client-side mounted
+    setIsClient(true);
+
     // Initialize with welcome message
     setChatMessages([
       {
@@ -1033,7 +1039,7 @@ export default function DashboardPage() {
 
                     {/* Messages */}
                     <div className="flex-1 overflow-y-auto p-4 space-y-4">
-                      {chatMessages.map((msg) => (
+                      {isClient && chatMessages.map((msg) => (
                         <div
                           key={msg.id}
                           className={cn(
