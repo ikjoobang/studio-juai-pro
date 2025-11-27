@@ -45,9 +45,10 @@ import {
   Loader2,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
+import toast, { Toaster } from "react-hot-toast";
 
-// API Base URL
-const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
+// API Base URL - Railway Production
+const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || "https://studio-juai-pro-production.up.railway.app";
 
 // ============================================
 // Types
@@ -300,6 +301,7 @@ export default function DashboardPage() {
 
   const generateVideo = useCallback(async () => {
     if (!prompt.trim()) {
+      toast.error("프롬프트를 입력해주세요.");
       setError("프롬프트를 입력해주세요.");
       return;
     }
@@ -312,6 +314,9 @@ export default function DashboardPage() {
     });
 
     const projectId = currentProject?.id || `project_${Date.now()}`;
+    
+    // 시작 알림
+    toast.loading("🎬 영상 생성을 시작합니다...", { id: "generating" });
 
     try {
       // Image-to-Video 모드 감지
@@ -320,7 +325,14 @@ export default function DashboardPage() {
       
       if (isImageToVideo) {
         console.log("📸 [Image-to-Video] 소스 이미지 감지됨:", sourceImageUrl);
+        toast.loading("📸 Image-to-Video 모드로 생성 중...", { id: "generating" });
       }
+      
+      console.log("🚀 [API] 영상 생성 요청:", {
+        url: `${API_BASE_URL}/api/video/generate`,
+        model: selectedModel,
+        prompt: prompt.substring(0, 50) + "...",
+      });
       
       const response = await fetch(`${API_BASE_URL}/api/video/generate`, {
         method: "POST",
@@ -333,9 +345,11 @@ export default function DashboardPage() {
           duration: 5,
           style_preset: selectedPreset,
           use_director: selectedModel === "auto",
-          source_image_url: sourceImageUrl || null, // Image-to-Video용
+          source_image_url: sourceImageUrl || null,
         }),
       });
+
+      console.log("📡 [API] 응답 상태:", response.status);
 
       if (!response.ok) {
         const errorData = await response.json();
@@ -343,20 +357,27 @@ export default function DashboardPage() {
       }
 
       const data = await response.json();
+      console.log("✅ [API] 응답 데이터:", data);
 
       // Show routing info if using Director
       if (data.routing_info) {
+        const modelName = data.routing_info.selected_model.toUpperCase();
+        toast.loading(`🧠 AI Director: ${modelName} 선택됨`, { id: "generating" });
         setGenerationStatus({
           isGenerating: true,
           progress: 10,
-          message: `🧠 AI Director: ${data.routing_info.selected_model.toUpperCase()} 선택 (${Math.round(data.routing_info.confidence * 100)}% 신뢰도)`,
+          message: `🧠 AI Director: ${modelName} 선택 (${Math.round(data.routing_info.confidence * 100)}% 신뢰도)`,
         });
+      } else {
+        toast.loading(`🎬 ${selectedModel.toUpperCase()}로 생성 중...`, { id: "generating" });
       }
 
       // Start polling
       await pollVideoProgress(projectId);
     } catch (err) {
       const errorMsg = err instanceof Error ? err.message : "알 수 없는 오류";
+      console.error("❌ [API] 오류:", errorMsg);
+      toast.error(`생성 실패: ${errorMsg}`, { id: "generating" });
       setError(errorMsg);
       setGenerationStatus({
         isGenerating: false,
@@ -395,10 +416,14 @@ export default function DashboardPage() {
             message: "✅ 영상 생성 완료!",
           });
 
+          // Success notification
+          toast.success("🎬 영상 생성이 완료되었습니다!", { id: "generating" });
+
           // Update video player
           if (videoRef.current) {
             videoRef.current.src = data.video_url;
             videoRef.current.load();
+            console.log("🎥 [Player] 비디오 로드됨:", data.video_url);
           }
 
           // Add to timeline
@@ -417,6 +442,7 @@ export default function DashboardPage() {
         }
 
         if (data.status === "failed") {
+          toast.error(`❌ 생성 실패: ${data.message || "알 수 없는 오류"}`, { id: "generating" });
           throw new Error(data.message || "영상 생성 실패");
         }
 
@@ -435,6 +461,7 @@ export default function DashboardPage() {
       }
     }
 
+    toast.error("⏰ 영상 생성 시간 초과 (5분 경과)", { id: "generating" });
     setError("영상 생성 시간 초과 (5분 경과)");
     setGenerationStatus({
       isGenerating: false,
@@ -494,6 +521,29 @@ export default function DashboardPage() {
 
   return (
     <div className="h-screen bg-[#111111] text-white flex flex-col overflow-hidden">
+      {/* Toast Notifications */}
+      <Toaster 
+        position="top-right"
+        toastOptions={{
+          style: {
+            background: '#1a1a1a',
+            color: '#fff',
+            border: '1px solid #333',
+          },
+          success: {
+            iconTheme: {
+              primary: '#03C75A',
+              secondary: '#fff',
+            },
+          },
+          error: {
+            iconTheme: {
+              primary: '#ef4444',
+              secondary: '#fff',
+            },
+          },
+        }}
+      />
       {/* Header */}
       <header className="h-14 bg-[#1a1a1a] border-b border-[#333] flex items-center justify-between px-4">
         <div className="flex items-center gap-4">
