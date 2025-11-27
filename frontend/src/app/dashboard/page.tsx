@@ -114,11 +114,11 @@ export default function Dashboard() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           project_id: currentProject.id,
-          title: currentProject.title,
-          description: currentProject.description || "",
-          aspect_ratio: currentProject.aspectRatio,
-          preset: currentProject.preset || "warm_film",
-          source_type: "ai_generate",
+          prompt: currentProject.description || currentProject.title || "아름다운 영상을 만들어주세요",
+          model: "kling",
+          aspect_ratio: currentProject.aspectRatio || "9:16",
+          duration: 5,
+          style_preset: currentProject.preset || "warm_film",
         }),
       });
 
