@@ -101,11 +101,15 @@ export default function Dashboard() {
   const { setChatOpen } = useChatStore();
   const { showNewProjectModal, setShowNewProjectModal } = useUIStore();
 
+  // 에러 메시지 상태
+  const [errorMessage, setErrorMessage] = useState<string | null>(null);
+
   // AI 영상 생성
   const handleGenerateVideo = useCallback(async () => {
     if (!currentProject || isGenerating) return;
 
     setIsGenerating(true);
+    setErrorMessage(null); // 이전 에러 초기화
     startRender(currentProject.id);
 
     try {
@@ -122,14 +126,26 @@ export default function Dashboard() {
         }),
       });
 
-      if (!response.ok) throw new Error("영상 생성 요청 실패");
+      // ❌ 에러 응답 처리 - 명확한 에러 메시지 표시
+      if (!response.ok) {
+        let errorDetail = "영상 생성 요청 실패";
+        try {
+          const errorData = await response.json();
+          errorDetail = errorData.detail || errorData.message || errorDetail;
+        } catch {
+          errorDetail = `HTTP ${response.status}: ${response.statusText}`;
+        }
+        throw new Error(errorDetail);
+      }
 
       const data = await response.json();
       await pollVideoProgress(currentProject.id);
 
     } catch (error) {
-      console.error("❌ 영상 생성 오류:", error);
-      failRender(error instanceof Error ? error.message : "알 수 없는 오류");
+      const errorMsg = error instanceof Error ? error.message : "알 수 없는 오류";
+      console.error("❌ 영상 생성 오류:", errorMsg);
+      setErrorMessage(errorMsg); // 에러 메시지 저장
+      failRender(errorMsg);
     } finally {
       setIsGenerating(false);
     }
@@ -184,6 +200,32 @@ export default function Dashboard() {
 
   return (
     <div className="flex h-screen bg-[#1a1a1a] overflow-hidden">
+      {/* ❌ 에러 Toast - 화면 상단에 고정 */}
+      <AnimatePresence>
+        {errorMessage && (
+          <motion.div
+            initial={{ opacity: 0, y: -50 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: -50 }}
+            className="fixed top-4 left-1/2 -translate-x-1/2 z-[100] 
+                       bg-red-600 text-white px-6 py-4 rounded-xl shadow-2xl
+                       max-w-xl flex items-start gap-3"
+          >
+            <div className="text-2xl">⚠️</div>
+            <div className="flex-1">
+              <div className="font-bold text-lg mb-1">생성 실패</div>
+              <div className="text-sm opacity-90">{errorMessage}</div>
+            </div>
+            <button
+              onClick={() => setErrorMessage(null)}
+              className="p-1 hover:bg-red-700 rounded"
+            >
+              <X className="w-5 h-5" />
+            </button>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
       {/* Left Sidebar - Project Navigator */}
       <AnimatePresence>
         {sidebarOpen && (

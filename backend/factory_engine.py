@@ -92,7 +92,11 @@ class GoAPIEngine:
     def __init__(self):
         self.api_key = os.getenv("GOAPI_KEY")
         if not self.api_key:
-            print("⚠️ GOAPI_KEY not found in environment")
+            print("❌ [CRITICAL] GOAPI_KEY 환경변수가 설정되지 않았습니다!")
+        else:
+            # 보안상 앞 8자리만 출력
+            masked_key = self.api_key[:8] + "..." + self.api_key[-4:]
+            print(f"✅ [GOAPI] API 키 로드됨: {masked_key}")
     
     def _get_headers(self) -> Dict[str, str]:
         return {
@@ -158,9 +162,18 @@ class GoAPIEngine:
         url = f"{self.BASE_URL}/task"
         body = self._build_request_body(request)
         
-        print(f"🎬 GoAPI 요청: {request.model.value} -> {url}")
-        print(f"   프롬프트: {request.prompt[:50]}...")
-        print(f"   요청 본문: {body}")
+        # 상세 로그 출력
+        masked_key = self.api_key[:8] + "..." if self.api_key else "NOT_SET"
+        print(f"=" * 60)
+        print(f"🎬 [GOAPI REQUEST]")
+        print(f"   URL: {url}")
+        print(f"   API Key: {masked_key}")
+        print(f"   Model: {request.model.value}")
+        print(f"   Prompt: {request.prompt[:80]}...")
+        print(f"   Aspect Ratio: {request.aspect_ratio.value}")
+        print(f"   Duration: {request.duration}s")
+        print(f"   Request Body: {body}")
+        print(f"=" * 60)
         
         try:
             async with httpx.AsyncClient(timeout=60.0) as client:
@@ -170,13 +183,48 @@ class GoAPIEngine:
                     json=body
                 )
                 
-                print(f"   응답 상태: {response.status_code}")
-                print(f"   응답 내용: {response.text[:500]}")
+                print(f"📡 [GOAPI RESPONSE]")
+                print(f"   HTTP Status: {response.status_code}")
+                print(f"   Response Body: {response.text[:1000]}")
+                
+                # HTTP 에러 체크
+                if response.status_code == 401:
+                    return VideoResponse(
+                        success=False,
+                        status="error",
+                        message="GoAPI 인증 실패: API 키가 유효하지 않습니다. 대시보드에서 키를 확인하세요.",
+                        model=request.model.value
+                    )
+                
+                if response.status_code == 402:
+                    return VideoResponse(
+                        success=False,
+                        status="error",
+                        message="GoAPI 크레딧 부족: 대시보드에서 크레딧을 충전하세요.",
+                        model=request.model.value
+                    )
+                
+                if response.status_code == 404:
+                    return VideoResponse(
+                        success=False,
+                        status="error",
+                        message=f"GoAPI 엔드포인트를 찾을 수 없습니다: {url}",
+                        model=request.model.value
+                    )
+                
+                if response.status_code >= 500:
+                    return VideoResponse(
+                        success=False,
+                        status="error",
+                        message=f"GoAPI 서버 오류 ({response.status_code}): 잠시 후 다시 시도하세요.",
+                        model=request.model.value
+                    )
                 
                 data = response.json()
                 
                 if data.get("code") == 200:
                     task_id = data.get("data", {}).get("task_id")
+                    print(f"✅ [GOAPI SUCCESS] task_id: {task_id}")
                     
                     return VideoResponse(
                         success=True,
@@ -187,22 +235,41 @@ class GoAPIEngine:
                         progress=10
                     )
                 else:
-                    error_msg = data.get("message", "Unknown error")
-                    print(f"   ❌ 오류: {error_msg}")
+                    error_code = data.get("code", "UNKNOWN")
+                    error_msg = data.get("message", "알 수 없는 오류")
+                    print(f"❌ [GOAPI ERROR] Code: {error_code}, Message: {error_msg}")
+                    
+                    # 에러 코드별 명확한 메시지
+                    if "key" in error_msg.lower() or "auth" in error_msg.lower():
+                        error_detail = f"API 키 오류: {error_msg}"
+                    elif "credit" in error_msg.lower() or "balance" in error_msg.lower():
+                        error_detail = f"크레딧 부족: {error_msg}"
+                    elif "limit" in error_msg.lower():
+                        error_detail = f"요청 한도 초과: {error_msg}"
+                    else:
+                        error_detail = f"GoAPI 오류 [{error_code}]: {error_msg}"
                     
                     return VideoResponse(
                         success=False,
                         status="error",
-                        message=f"API 오류: {error_msg}",
+                        message=error_detail,
                         model=request.model.value
                     )
                     
-        except Exception as e:
-            print(f"   ❌ 예외: {str(e)}")
+        except httpx.TimeoutException:
+            print(f"❌ [GOAPI TIMEOUT] 60초 타임아웃")
             return VideoResponse(
                 success=False,
                 status="error",
-                message=str(e),
+                message="GoAPI 요청 타임아웃: 서버 응답이 너무 느립니다.",
+                model=request.model.value
+            )
+        except Exception as e:
+            print(f"❌ [GOAPI EXCEPTION] {type(e).__name__}: {str(e)}")
+            return VideoResponse(
+                success=False,
+                status="error",
+                message=f"GoAPI 연결 오류: {str(e)}",
                 model=request.model.value
             )
     
