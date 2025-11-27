@@ -43,6 +43,7 @@ import {
   AlertCircle,
   CheckCircle,
   Loader2,
+  Download,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import toast, { Toaster } from "react-hot-toast";
@@ -569,10 +570,9 @@ export default function DashboardPage() {
 
   /**
    * 내보내기 (Export) 핸들러
-   * - 영상 URL을 새 탭으로 열어 다운로드
-   * - 또는 Creatomate 렌더링 호출
+   * - 영상 파일 직접 다운로드
    */
-  const handleExport = useCallback(() => {
+  const handleExport = useCallback(async () => {
     if (!exportVideoUrl) {
       toast.error("내보낼 영상이 없습니다.");
       return;
@@ -580,9 +580,37 @@ export default function DashboardPage() {
 
     console.log("📤 [내보내기] URL:", exportVideoUrl);
     
-    // 새 탭으로 영상 열기 (다운로드 가능)
-    window.open(exportVideoUrl, "_blank");
-    toast.success("📤 영상 다운로드 페이지가 열렸습니다!");
+    try {
+      // 파일명 생성
+      const timestamp = new Date().toISOString().slice(0, 19).replace(/[-:T]/g, "");
+      const fileName = `Studio_Juai_${timestamp}.mp4`;
+      
+      // 방법 1: <a> 태그로 직접 다운로드 트리거
+      const link = document.createElement("a");
+      link.href = exportVideoUrl;
+      link.download = fileName;
+      link.target = "_blank";
+      
+      // CORS 문제로 download 속성이 작동하지 않을 경우 새 탭으로 열기
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      
+      toast.success(`📤 "${fileName}" 다운로드가 시작되었습니다!`, {
+        duration: 4000,
+      });
+      
+      console.log("✅ [내보내기] 다운로드 트리거 완료:", fileName);
+      
+    } catch (error) {
+      console.error("❌ [내보내기] 오류:", error);
+      
+      // 폴백: 새 탭으로 열기
+      window.open(exportVideoUrl, "_blank");
+      toast.success("📤 새 탭에서 영상을 열었습니다. 우클릭 → 다른 이름으로 저장하세요.", {
+        duration: 5000,
+      });
+    }
   }, [exportVideoUrl]);
 
   // ============================================
@@ -696,6 +724,24 @@ export default function DashboardPage() {
               {currentProject.title}
             </span>
           )}
+          
+          {/* ✅ 내보내기 버튼 - 헤더에 추가 */}
+          <Button
+            variant={canExport ? "default" : "ghost"}
+            size="sm"
+            onClick={handleExport}
+            disabled={!canExport}
+            className={cn(
+              "transition-all",
+              canExport 
+                ? "bg-[#03C75A] hover:bg-[#02a84d] text-white" 
+                : "text-gray-500 cursor-not-allowed"
+            )}
+          >
+            <Download className="w-4 h-4 mr-1" />
+            내보내기
+          </Button>
+          
           <Button
             variant="ghost"
             size="sm"
