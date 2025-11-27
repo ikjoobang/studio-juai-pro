@@ -1,22 +1,21 @@
 """
-Studio Juai PRO - Factory Engine
-================================
-Hybrid API Engine: Kling Official + GoAPI (Veo, Sora, MJ) + HeyGen + Creatomate
+Studio Juai PRO - Factory Engine v5.0
+=====================================
+Hybrid API Engine: Kling Official (JWT) + GoAPI (Veo, Sora, Suno, MJ)
 
 환경 변수:
-- KLING_ACCESS_KEY / KLING_SECRET_KEY (Official)
-- GOAPI_KEY (Universal Wrapper)
-- HEYGEN_API_KEY
-- CREATOMATE_API_KEY
+- KLING_ACCESS_KEY / KLING_SECRET_KEY (Official JWT 인증)
+- GOAPI_KEY (Veo, Sora, Suno, Midjourney 통합)
+- HEYGEN_API_KEY (AI Avatar)
+- CREATOMATE_API_KEY (Video Editing)
+- SUPABASE_URL / SUPABASE_KEY (Storage)
 """
 
 import os
 import json
 import httpx
-import hashlib
-import hmac
+import jwt  # PyJWT
 import time
-import base64
 from typing import Optional, Dict, Any, List
 from enum import Enum
 from dataclasses import dataclass, field
@@ -29,12 +28,17 @@ from datetime import datetime
 
 class VideoModel(Enum):
     """지원하는 영상 생성 모델"""
-    KLING = "kling"       # Kling Official API
-    VEO = "veo"           # Google Veo (via GoAPI)
-    SORA = "sora"         # OpenAI Sora (via GoAPI)
-    HAILUO = "hailuo"     # Hailuo (via GoAPI)
-    LUMA = "luma"         # Luma (via GoAPI)
-    MIDJOURNEY = "midjourney"  # Midjourney (via GoAPI)
+    KLING = "kling"           # Kling Official API (JWT)
+    VEO = "veo"               # Google Veo 3.1 (via GoAPI)
+    SORA = "sora"             # OpenAI Sora 2 (via GoAPI)
+    MIDJOURNEY = "midjourney" # Midjourney (via GoAPI)
+    HAILUO = "hailuo"         # Hailuo (via GoAPI)
+    LUMA = "luma"             # Luma (via GoAPI)
+
+
+class AudioModel(Enum):
+    """지원하는 음악 생성 모델"""
+    SUNO = "suno"             # Suno (via GoAPI)
 
 
 class AspectRatio(Enum):
@@ -86,6 +90,25 @@ class VideoResponse:
 
 
 @dataclass
+class MusicRequest:
+    """음악 생성 요청"""
+    prompt: str
+    style: str = "pop"
+    duration: int = 30
+    instrumental: bool = False
+
+
+@dataclass
+class MusicResponse:
+    """음악 생성 응답"""
+    success: bool
+    task_id: Optional[str] = None
+    audio_url: Optional[str] = None
+    status: str = "pending"
+    message: str = ""
+
+
+@dataclass
 class AvatarRequest:
     """HeyGen 아바타 요청"""
     script: str
@@ -113,49 +136,44 @@ STYLE_PRESETS = {
         "name": "따뜻한 필름",
         "prompt_suffix": "shot on iPhone 15 Pro, warm film look, natural lighting, cinematic grain, 4K quality",
         "color_grade": "warm",
-        "vignette": True
     },
     "cool_modern": {
         "name": "시원한 모던",
         "prompt_suffix": "clean modern aesthetic, cool blue tones, sharp details, professional lighting, 4K quality",
         "color_grade": "cool",
-        "vignette": False
     },
     "golden_hour": {
         "name": "골든아워",
         "prompt_suffix": "golden hour lighting, warm sunset colors, soft shadows, dreamy atmosphere, cinematic, 4K quality",
         "color_grade": "golden",
-        "vignette": True
     },
     "cinematic_teal_orange": {
         "name": "시네마틱",
         "prompt_suffix": "cinematic teal and orange color grade, dramatic lighting, film grain, anamorphic lens flare, 4K HDR",
         "color_grade": "teal_orange",
-        "vignette": True
     },
     "noir": {
         "name": "느와르",
         "prompt_suffix": "high contrast black and white, dramatic shadows, film noir style, moody atmosphere, 4K quality",
         "color_grade": "noir",
-        "vignette": True
     },
     "vibrant": {
         "name": "비비드",
         "prompt_suffix": "vibrant saturated colors, punchy contrast, energetic mood, professional color grade, 4K quality",
         "color_grade": "vibrant",
-        "vignette": False
     }
 }
 
 
 # ============================================
-# Kling Official API Client
+# Kling Official API Client (JWT Authentication)
 # ============================================
 
 class KlingOfficialClient:
     """
     Kling Official API Client
-    공식 API를 통한 고품질 영상 생성
+    공식 문서 기준 JWT 토큰 인증 방식 구현
+    https://docs.qingque.cn/d/home/eZQBaK7oKEjz-rRM3S8jyaLTr
     """
     
     BASE_URL = "https://api.klingai.com"
@@ -165,30 +183,42 @@ class KlingOfficialClient:
         self.secret_key = os.getenv("KLING_SECRET_KEY")
         
         if self.access_key and self.secret_key:
-            print("✅ [Kling Official] API 키 설정됨")
+            print(f"✅ [Kling Official] API 키 설정됨: {self.access_key[:8]}...")
         else:
             print("⚠️ [Kling Official] API 키 없음 - GoAPI 폴백 사용")
     
-    def _generate_signature(self, method: str, path: str, timestamp: str) -> str:
-        """API 서명 생성"""
-        string_to_sign = f"{method}\n{path}\n{timestamp}"
-        signature = hmac.new(
-            self.secret_key.encode('utf-8'),
-            string_to_sign.encode('utf-8'),
-            hashlib.sha256
-        ).hexdigest()
-        return signature
-    
-    def _get_headers(self, method: str, path: str) -> Dict[str, str]:
-        """인증 헤더 생성"""
-        timestamp = str(int(time.time() * 1000))
-        signature = self._generate_signature(method, path, timestamp)
+    def _generate_jwt_token(self) -> str:
+        """
+        Kling Official API JWT 토큰 생성
+        공식 문서 기준 HS256 알고리즘 사용
+        """
+        headers = {
+            "alg": "HS256",
+            "typ": "JWT"
+        }
         
+        now = int(time.time())
+        payload = {
+            "iss": self.access_key,
+            "exp": now + 1800,  # 30분 유효
+            "nbf": now - 5      # 5초 전부터 유효
+        }
+        
+        token = jwt.encode(
+            payload,
+            self.secret_key,
+            algorithm="HS256",
+            headers=headers
+        )
+        
+        return token
+    
+    def _get_headers(self) -> Dict[str, str]:
+        """인증 헤더 생성"""
+        token = self._generate_jwt_token()
         return {
             "Content-Type": "application/json",
-            "X-Access-Key": self.access_key,
-            "X-Timestamp": timestamp,
-            "X-Signature": signature
+            "Authorization": f"Bearer {token}"
         }
     
     @property
@@ -197,7 +227,12 @@ class KlingOfficialClient:
         return bool(self.access_key and self.secret_key)
     
     async def generate_video(self, request: VideoRequest) -> VideoResponse:
-        """Kling Official API로 영상 생성"""
+        """
+        Kling Official API로 영상 생성
+        
+        - Text-to-Video: /v1/videos/text2video
+        - Image-to-Video: /v1/videos/image2video
+        """
         
         if not self.is_available:
             return VideoResponse(
@@ -206,50 +241,86 @@ class KlingOfficialClient:
                 message="Kling Official API 키가 설정되지 않았습니다."
             )
         
-        path = "/v1/videos/text2video"
-        url = f"{self.BASE_URL}{path}"
-        
         # 프롬프트 최적화
         preset = STYLE_PRESETS.get(request.style_preset, STYLE_PRESETS["warm_film"])
         enhanced_prompt = f"{request.prompt}, {preset['prompt_suffix']}"
         
-        body = {
-            "prompt": enhanced_prompt,
-            "negative_prompt": request.negative_prompt or "blurry, low quality, distorted",
-            "aspect_ratio": request.aspect_ratio.value,
-            "duration": request.duration,
-            "cfg_scale": 0.5
-        }
+        # Image-to-Video vs Text-to-Video
+        is_image_to_video = bool(request.image_url)
         
-        if request.image_url:
-            body["image_url"] = request.image_url
+        if is_image_to_video:
+            path = "/v1/videos/image2video"
+            body = {
+                "model_name": "kling-v1-5",  # 또는 kling-v1
+                "image": request.image_url,
+                "prompt": enhanced_prompt,
+                "negative_prompt": request.negative_prompt or "blurry, low quality, distorted, watermark",
+                "cfg_scale": 0.5,
+                "mode": "std",  # std 또는 pro
+                "duration": str(request.duration),  # "5" 또는 "10"
+                "aspect_ratio": request.aspect_ratio.value
+            }
+            print(f"📸 [Kling Official] Image-to-Video 요청")
+            print(f"   이미지: {request.image_url[:50]}...")
+        else:
+            path = "/v1/videos/text2video"
+            body = {
+                "model_name": "kling-v1-5",
+                "prompt": enhanced_prompt,
+                "negative_prompt": request.negative_prompt or "blurry, low quality, distorted, watermark",
+                "cfg_scale": 0.5,
+                "mode": "std",
+                "duration": str(request.duration),
+                "aspect_ratio": request.aspect_ratio.value
+            }
+            print(f"✏️ [Kling Official] Text-to-Video 요청")
         
-        print(f"🎬 [Kling Official] 영상 생성 요청")
-        print(f"   프롬프트: {enhanced_prompt[:100]}...")
+        url = f"{self.BASE_URL}{path}"
+        
+        print(f"🎬 [Kling Official] 영상 생성 시작")
+        print(f"   URL: {url}")
+        print(f"   프롬프트: {enhanced_prompt[:80]}...")
         
         try:
             async with httpx.AsyncClient(timeout=60.0) as client:
                 response = await client.post(
                     url,
-                    headers=self._get_headers("POST", path),
+                    headers=self._get_headers(),
                     json=body
                 )
                 
-                print(f"📡 [Kling Official] 응답: {response.status_code}")
+                print(f"📡 [Kling Official] HTTP {response.status_code}")
                 
                 if response.status_code == 200:
                     data = response.json()
-                    task_id = data.get("data", {}).get("task_id")
                     
-                    return VideoResponse(
-                        success=True,
-                        task_id=task_id,
-                        status="processing",
-                        message="Kling Official 영상 생성 시작",
-                        model="kling_official",
-                        progress=10
-                    )
+                    # Kling API 응답 구조 처리
+                    if data.get("code") == 0:
+                        task_data = data.get("data", {})
+                        task_id = task_data.get("task_id")
+                        
+                        print(f"✅ [Kling Official] 작업 생성 성공: {task_id}")
+                        
+                        return VideoResponse(
+                            success=True,
+                            task_id=task_id,
+                            status="processing",
+                            message="Kling Official 영상 생성 시작",
+                            model="kling_official",
+                            progress=10
+                        )
+                    else:
+                        error_msg = data.get("message", "알 수 없는 오류")
+                        print(f"❌ [Kling Official] API 오류: {error_msg}")
+                        return VideoResponse(
+                            success=False,
+                            status="error",
+                            message=f"Kling API 오류: {error_msg}"
+                        )
                 else:
+                    error_text = response.text[:200]
+                    print(f"❌ [Kling Official] HTTP 오류: {response.status_code}")
+                    print(f"   응답: {error_text}")
                     return VideoResponse(
                         success=False,
                         status="error",
@@ -257,7 +328,7 @@ class KlingOfficialClient:
                     )
                     
         except Exception as e:
-            print(f"❌ [Kling Official] 오류: {e}")
+            print(f"❌ [Kling Official] 예외: {e}")
             return VideoResponse(
                 success=False,
                 status="error",
@@ -270,41 +341,58 @@ class KlingOfficialClient:
         if not self.is_available:
             return VideoResponse(success=False, status="error", message="API 키 없음")
         
-        path = f"/v1/videos/text2video/{task_id}"
-        url = f"{self.BASE_URL}{path}"
+        # 상태 조회 엔드포인트
+        url = f"{self.BASE_URL}/v1/videos/text2video/{task_id}"
         
         try:
             async with httpx.AsyncClient(timeout=30.0) as client:
-                response = await client.get(
-                    url,
-                    headers=self._get_headers("GET", path)
-                )
+                response = await client.get(url, headers=self._get_headers())
                 
                 if response.status_code == 200:
-                    data = response.json().get("data", {})
-                    status = data.get("status", "processing")
-                    video_url = data.get("video_url")
+                    data = response.json()
                     
-                    progress = 50
-                    if status == "completed":
-                        progress = 100
-                    elif status == "failed":
-                        progress = 0
+                    if data.get("code") == 0:
+                        task_data = data.get("data", {})
+                        status = task_data.get("task_status", "processing")
+                        
+                        # 상태 매핑
+                        status_map = {
+                            "submitted": "processing",
+                            "processing": "processing",
+                            "succeed": "completed",
+                            "failed": "failed"
+                        }
+                        
+                        mapped_status = status_map.get(status, status)
+                        video_url = None
+                        progress = 50
+                        
+                        if mapped_status == "completed":
+                            # 비디오 URL 추출
+                            works = task_data.get("task_result", {}).get("videos", [])
+                            if works:
+                                video_url = works[0].get("url")
+                            progress = 100
+                            print(f"✅ [Kling Official] 완료! URL: {video_url}")
+                            
+                        elif mapped_status == "failed":
+                            progress = 0
+                            print(f"❌ [Kling Official] 작업 실패")
+                        
+                        return VideoResponse(
+                            success=True,
+                            task_id=task_id,
+                            video_url=video_url,
+                            status=mapped_status,
+                            progress=progress,
+                            model="kling_official"
+                        )
                     
-                    return VideoResponse(
-                        success=True,
-                        task_id=task_id,
-                        video_url=video_url,
-                        status=status,
-                        progress=progress,
-                        model="kling_official"
-                    )
-                else:
-                    return VideoResponse(
-                        success=False,
-                        status="error",
-                        message=f"상태 조회 실패: {response.status_code}"
-                    )
+                return VideoResponse(
+                    success=False,
+                    status="error",
+                    message=f"상태 조회 실패: {response.status_code}"
+                )
                     
         except Exception as e:
             return VideoResponse(
@@ -315,40 +403,31 @@ class KlingOfficialClient:
 
 
 # ============================================
-# GoAPI Universal Client
+# GoAPI Universal Client (Veo, Sora, Suno, MJ)
 # ============================================
 
 class GoAPIClient:
     """
     GoAPI Universal Client
-    Veo, Sora, Kling, Hailuo, Luma, Midjourney 통합
+    Veo 3.1, Sora 2, Suno, Midjourney 통합
     """
     
     BASE_URL = "https://api.goapi.ai/api/v1"
     
-    # 모델별 task_type 매핑 (GoAPI 2024 형식) - 확인완료!
-    # 참조: https://goapi.ai/dashboard - Video Models
-    # ✅ 실제 테스트로 확인된 task_type만 사용
+    # 모델별 task_type 매핑 (2024-11-27 테스트 완료)
     MODEL_CONFIG = {
-        VideoModel.KLING: {"task_type": "video_generation", "model": "kling"},
-        VideoModel.VEO: {"task_type": "veo3.1-video", "model": "veo3.1"},         # ✅ Veo3.1 - veo3.1-video (text-to-video)
-        VideoModel.SORA: {"task_type": "sora2-video", "model": "sora2"},          # Sora2 - sora2-video
+        VideoModel.VEO: {"task_type": "veo3.1-video", "model": "veo3.1"},
+        VideoModel.SORA: {"task_type": "sora2-video", "model": "sora2"},
+        VideoModel.MIDJOURNEY: {"task_type": "imagine", "model": "midjourney"},
         VideoModel.HAILUO: {"task_type": "video_generation", "model": "hailuo"},
         VideoModel.LUMA: {"task_type": "video_generation", "model": "luma"},
-        VideoModel.MIDJOURNEY: {"task_type": "image_generation", "model": "midjourney"},
+        VideoModel.KLING: {"task_type": "video_generation", "model": "kling"},  # GoAPI fallback
     }
     
-    # Image-to-Video 지원 모델 설정
-    # ✅ 2024-11-27 테스트 결과:
-    # - Veo3.1: image_to_video task_type 미지원 (GoAPI 400 에러)
-    # - Kling: video_generation + image_url 파라미터로 I2V 지원 ✅
-    # - Sora2: I2V 미지원 (text-to-video only)
-    IMAGE_TO_VIDEO_SUPPORTED = {
-        VideoModel.KLING: True,   # ✅ video_generation + image_url
-        VideoModel.VEO: False,    # ❌ GoAPI에서 image_to_video 미지원
-        VideoModel.SORA: False,   # ❌ text-to-video only
-        VideoModel.HAILUO: True,  # 미검증 (video_generation + image_url 추정)
-        VideoModel.LUMA: True,    # 미검증 (video_generation + image_url 추정)
+    # Suno 설정
+    SUNO_CONFIG = {
+        "task_type": "suno_music",
+        "model": "suno"
     }
     
     def __init__(self):
@@ -366,23 +445,19 @@ class GoAPIClient:
             "x-api-key": self.api_key
         }
     
-    def _build_request_body(self, request: VideoRequest) -> Dict[str, Any]:
-        """
-        GoAPI 요청 본문 생성 - 모델별 형식 지원
+    @property
+    def is_available(self) -> bool:
+        return bool(self.api_key)
+    
+    def _build_video_request(self, request: VideoRequest) -> Dict[str, Any]:
+        """GoAPI 비디오 요청 본문 생성"""
         
-        Smart Switching Logic:
-        - 이미지가 있으면 → Image-to-Video 모드
-        - 이미지가 없으면 → Text-to-Video 모드
-        """
-        
-        config = self.MODEL_CONFIG.get(request.model, self.MODEL_CONFIG[VideoModel.KLING])
-        is_image_to_video = bool(request.image_url)
+        config = self.MODEL_CONFIG.get(request.model, self.MODEL_CONFIG[VideoModel.VEO])
         
         # 프롬프트 최적화
         preset = STYLE_PRESETS.get(request.style_preset, STYLE_PRESETS["warm_film"])
         enhanced_prompt = f"{request.prompt}, {preset['prompt_suffix']}"
         
-        # 기본 body 구조
         body = {
             "model": config["model"],
             "task_type": config["task_type"],
@@ -391,70 +466,49 @@ class GoAPIClient:
             }
         }
         
-        print(f"{'='*60}")
-        print(f"🎬 [BUILD REQUEST] 모드: {'IMAGE-TO-VIDEO' if is_image_to_video else 'TEXT-TO-VIDEO'}")
-        print(f"   모델: {request.model.value}")
-        
-        # ============================================
-        # Veo3.1 (Text-to-Video ONLY)
-        # ❌ GoAPI Veo3.1은 image_to_video task_type 미지원 (2024-11-27 확인)
-        # ============================================
+        # 모델별 파라미터 설정
         if request.model == VideoModel.VEO:
-            if is_image_to_video:
-                # Veo3.1은 I2V 미지원 - 이미지 무시하고 T2V로 진행
-                print("⚠️ [Veo3.1] Image-to-Video 미지원 - Kling 사용 권장!")
-                print("   이미지를 무시하고 Text-to-Video로 진행합니다.")
-            
-            # Text-to-Video: task_type = "veo3.1-video"
-            print("✏️ [Veo3.1] Text-to-Video 모드 (veo3.1-video)")
+            # Veo 3.1: Text-to-Video only (I2V 미지원)
             body["input"]["aspect_ratio"] = request.aspect_ratio.value
-            body["input"]["duration"] = f"{request.duration}s"  # Veo는 string ("5s")
+            body["input"]["duration"] = f"{request.duration}s"
             body["input"]["resolution"] = "720p"
-        
-        # ============================================
-        # Kling Smart Switching (I2V 지원 ✅)
-        # ✅ GoAPI Kling: video_generation + image_url 파라미터로 I2V 작동
-        # ⚠️ duration은 반드시 INTEGER (문자열 금지!)
-        # ============================================
-        elif request.model == VideoModel.KLING:
-            if is_image_to_video:
-                # Kling Image-to-Video: video_generation + image_url
-                print("📸 [Kling] Image-to-Video 모드 활성화")
-                print(f"   source_image: {request.image_url}")
-                body["input"]["image_url"] = request.image_url
-            else:
-                print("✏️ [Kling] Text-to-Video 모드 활성화")
             
-            # Kling 공통 파라미터 - duration은 INTEGER!
-            body["input"]["aspect_ratio"] = request.aspect_ratio.value
-            body["input"]["duration"] = int(request.duration)  # ⚠️ int 필수!
-        
-        # ============================================
-        # Sora2 (Text-to-Video only)
-        # ============================================
+            if request.image_url:
+                print("⚠️ [Veo3.1] Image-to-Video 미지원 - 이미지 무시")
+                
         elif request.model == VideoModel.SORA:
-            print("🎬 [Sora2] Text-to-Video 모드 (sora2-video)")
-            # Sora2는 현재 text-to-video만 지원
-            if is_image_to_video:
-                print("⚠️ [Sora2] Image-to-Video 미지원 - 이미지 무시")
-        
-        # ============================================
-        # 기타 모델 (Hailuo, Luma)
-        # ============================================
-        else:
+            # Sora 2: Text-to-Video only
             body["input"]["aspect_ratio"] = request.aspect_ratio.value
             body["input"]["duration"] = request.duration
             
-            if is_image_to_video:
+            if request.image_url:
+                print("⚠️ [Sora2] Image-to-Video 미지원 - 이미지 무시")
+                
+        elif request.model == VideoModel.KLING:
+            # Kling via GoAPI: I2V 지원
+            body["input"]["aspect_ratio"] = request.aspect_ratio.value
+            body["input"]["duration"] = int(request.duration)  # int 필수!
+            
+            if request.image_url:
+                print(f"📸 [GoAPI Kling] Image-to-Video")
+                body["input"]["image_url"] = request.image_url
+                
+        elif request.model == VideoModel.MIDJOURNEY:
+            # Midjourney: 이미지 생성
+            body["task_type"] = "imagine"
+            body["input"]["aspect_ratio"] = request.aspect_ratio.value
+            
+        else:
+            # Hailuo, Luma 등
+            body["input"]["aspect_ratio"] = request.aspect_ratio.value
+            body["input"]["duration"] = int(request.duration)
+            
+            if request.image_url:
                 body["input"]["image_url"] = request.image_url
         
-        # Negative prompt (공통)
+        # Negative prompt
         if request.negative_prompt:
             body["input"]["negative_prompt"] = request.negative_prompt
-        
-        print(f"   task_type: {body['task_type']}")
-        print(f"   image_url: {'✅' if is_image_to_video else '❌'}")
-        print(f"{'='*60}")
         
         return body
     
@@ -470,101 +524,55 @@ class GoAPIClient:
             )
         
         url = f"{self.BASE_URL}/task"
-        body = self._build_request_body(request)
+        body = self._build_video_request(request)
         
-        # 상세 로그
-        masked_key = self.api_key[:8] + "..." if self.api_key else "NOT_SET"
         print(f"{'='*60}")
-        print(f"🎬 [GOAPI REQUEST]")
-        print(f"   URL: {url}")
-        print(f"   API Key: {masked_key}")
-        print(f"   Model: {request.model.value}")
-        print(f"   Prompt: {request.prompt[:80]}...")
-        print(f"   Aspect Ratio: {request.aspect_ratio.value}")
-        print(f"   Duration: {request.duration}s")
+        print(f"🎬 [GoAPI] 영상 생성 요청")
+        print(f"   Model: {body['model']}")
+        print(f"   Task Type: {body['task_type']}")
+        print(f"   Prompt: {body['input']['prompt'][:80]}...")
         print(f"{'='*60}")
         
         try:
             async with httpx.AsyncClient(timeout=60.0) as client:
-                response = await client.post(
-                    url,
-                    headers=self._get_headers(),
-                    json=body
-                )
+                response = await client.post(url, headers=self._get_headers(), json=body)
                 
-                print(f"📡 [GOAPI RESPONSE]")
-                print(f"   HTTP Status: {response.status_code}")
-                print(f"   Response: {response.text[:500]}")
+                print(f"📡 [GoAPI] HTTP {response.status_code}")
                 
-                # HTTP 에러 체크
-                if response.status_code == 401:
-                    return VideoResponse(
-                        success=False,
-                        status="error",
-                        message="GoAPI 인증 실패: API 키가 유효하지 않습니다.",
-                        model=request.model.value
-                    )
-                
-                if response.status_code == 402:
-                    return VideoResponse(
-                        success=False,
-                        status="error",
-                        message="GoAPI 크레딧 부족: 대시보드에서 충전하세요.",
-                        model=request.model.value
-                    )
-                
-                if response.status_code == 404:
-                    return VideoResponse(
-                        success=False,
-                        status="error",
-                        message=f"GoAPI 엔드포인트를 찾을 수 없습니다.",
-                        model=request.model.value
-                    )
-                
-                if response.status_code >= 500:
-                    return VideoResponse(
-                        success=False,
-                        status="error",
-                        message=f"GoAPI 서버 오류 ({response.status_code})",
-                        model=request.model.value
-                    )
-                
-                data = response.json()
-                
-                if data.get("code") == 200:
-                    task_id = data.get("data", {}).get("task_id")
-                    print(f"✅ [GOAPI SUCCESS] task_id: {task_id}")
+                if response.status_code == 200:
+                    data = response.json()
                     
-                    return VideoResponse(
-                        success=True,
-                        task_id=task_id,
-                        status="processing",
-                        message="영상 생성이 시작되었습니다.",
-                        model=request.model.value,
-                        progress=10
-                    )
+                    if data.get("code") == 200:
+                        task_id = data.get("data", {}).get("task_id")
+                        print(f"✅ [GoAPI] 작업 생성: {task_id}")
+                        
+                        return VideoResponse(
+                            success=True,
+                            task_id=task_id,
+                            status="processing",
+                            message="영상 생성이 시작되었습니다.",
+                            model=request.model.value,
+                            progress=10
+                        )
+                    else:
+                        error_msg = data.get("message", "알 수 없는 오류")
+                        print(f"❌ [GoAPI] 오류: {error_msg}")
+                        return VideoResponse(
+                            success=False,
+                            status="error",
+                            message=f"GoAPI 오류: {error_msg}",
+                            model=request.model.value
+                        )
                 else:
-                    error_code = data.get("code", "UNKNOWN")
-                    error_msg = data.get("message", "알 수 없는 오류")
-                    print(f"❌ [GOAPI ERROR] Code: {error_code}, Message: {error_msg}")
-                    
                     return VideoResponse(
                         success=False,
                         status="error",
-                        message=f"GoAPI 오류 [{error_code}]: {error_msg}",
+                        message=f"GoAPI HTTP 오류: {response.status_code}",
                         model=request.model.value
                     )
                     
-        except httpx.TimeoutException:
-            print(f"❌ [GOAPI TIMEOUT] 60초 타임아웃")
-            return VideoResponse(
-                success=False,
-                status="error",
-                message="GoAPI 요청 타임아웃",
-                model=request.model.value
-            )
         except Exception as e:
-            print(f"❌ [GOAPI EXCEPTION] {type(e).__name__}: {str(e)}")
+            print(f"❌ [GoAPI] 예외: {e}")
             return VideoResponse(
                 success=False,
                 status="error",
@@ -572,93 +580,140 @@ class GoAPIClient:
                 model=request.model.value
             )
     
+    async def generate_music(self, request: MusicRequest) -> MusicResponse:
+        """GoAPI Suno로 음악 생성"""
+        
+        if not self.api_key:
+            return MusicResponse(
+                success=False,
+                status="error",
+                message="GoAPI 키가 설정되지 않았습니다."
+            )
+        
+        url = f"{self.BASE_URL}/task"
+        body = {
+            "model": "suno",
+            "task_type": "generate_music",
+            "input": {
+                "prompt": request.prompt,
+                "style": request.style,
+                "duration": request.duration,
+                "instrumental": request.instrumental
+            }
+        }
+        
+        print(f"🎵 [GoAPI Suno] 음악 생성 요청")
+        print(f"   프롬프트: {request.prompt[:80]}...")
+        print(f"   스타일: {request.style}")
+        
+        try:
+            async with httpx.AsyncClient(timeout=60.0) as client:
+                response = await client.post(url, headers=self._get_headers(), json=body)
+                
+                if response.status_code == 200:
+                    data = response.json()
+                    
+                    if data.get("code") == 200:
+                        task_id = data.get("data", {}).get("task_id")
+                        print(f"✅ [Suno] 작업 생성: {task_id}")
+                        
+                        return MusicResponse(
+                            success=True,
+                            task_id=task_id,
+                            status="processing",
+                            message="음악 생성이 시작되었습니다."
+                        )
+                        
+                return MusicResponse(
+                    success=False,
+                    status="error",
+                    message=f"Suno API 오류: {response.status_code}"
+                )
+                
+        except Exception as e:
+            return MusicResponse(
+                success=False,
+                status="error",
+                message=f"Suno 연결 오류: {str(e)}"
+            )
+    
     async def check_status(self, task_id: str, model: VideoModel) -> VideoResponse:
         """GoAPI 작업 상태 확인"""
         
-        if not self.api_key or not task_id:
-            return VideoResponse(
-                success=False,
-                status="error",
-                message="필수 파라미터 누락"
-            )
+        if not self.api_key:
+            return VideoResponse(success=False, status="error", message="API 키 없음")
         
         url = f"{self.BASE_URL}/task/{task_id}"
         
         try:
             async with httpx.AsyncClient(timeout=30.0) as client:
                 response = await client.get(url, headers=self._get_headers())
-                data = response.json()
                 
-                if data.get("code") == 200:
-                    task_data = data.get("data", {})
-                    status = task_data.get("status", "processing")
-                    video_url = None
-                    progress = 50
+                if response.status_code == 200:
+                    data = response.json()
                     
-                    output = task_data.get("output", {})
-                    
-                    if status in ["completed", "succeed"]:
-                        # 비디오 URL 추출 (다양한 형식 지원)
-                        works = output.get("works", [])
-                        if works:
-                            work = works[0]
-                            video_url = (
-                                work.get("video", {}).get("resource") or
-                                work.get("video", {}).get("resource_without_watermark") or
-                                work.get("resource", {}).get("resource")
-                            )
+                    if data.get("code") == 200:
+                        task_data = data.get("data", {})
+                        status = task_data.get("status", "processing")
+                        output = task_data.get("output", {})
                         
-                        progress = 100
-                        status = "completed"
-                        print(f"✅ [VIDEO COMPLETE] URL: {video_url}")
+                        video_url = None
+                        progress = 50
                         
-                    elif status == "failed":
-                        error_info = task_data.get("error", {})
-                        print(f"❌ [VIDEO FAILED] {error_info}")
-                        progress = 0
+                        if status in ["completed", "succeed"]:
+                            # 비디오 URL 추출
+                            works = output.get("works", [])
+                            if works:
+                                work = works[0]
+                                video_url = (
+                                    work.get("video", {}).get("resource") or
+                                    work.get("video", {}).get("resource_without_watermark") or
+                                    work.get("resource", {}).get("resource") or
+                                    output.get("video_url")
+                                )
+                            
+                            # Veo3.1 특수 처리
+                            if not video_url and model == VideoModel.VEO:
+                                video_url = output.get("video_url") or output.get("url")
+                            
+                            progress = 100
+                            status = "completed"
+                            print(f"✅ [GoAPI] 완료! URL: {video_url}")
+                            
+                        elif status == "failed":
+                            progress = 0
+                            error = task_data.get("error", {})
+                            print(f"❌ [GoAPI] 실패: {error}")
+                            
+                        elif status == "pending":
+                            progress = 10
+                            
+                        elif status == "processing":
+                            progress = min(90, max(20, output.get("status", 0)))
                         
-                    elif status == "processing":
-                        output_status = output.get("status", 0)
-                        progress = min(90, max(20, output_status))
+                        return VideoResponse(
+                            success=True,
+                            task_id=task_id,
+                            video_url=video_url,
+                            status=status,
+                            progress=progress,
+                            model=model.value
+                        )
                         
-                    elif status == "pending":
-                        progress = 10
-                    
-                    return VideoResponse(
-                        success=True,
-                        task_id=task_id,
-                        video_url=video_url,
-                        status=status,
-                        message=self._get_status_message(status),
-                        model=model.value,
-                        progress=progress
-                    )
-                else:
-                    return VideoResponse(
-                        success=False,
-                        status="error",
-                        message=f"상태 조회 실패: {data.get('message', 'Unknown')}",
-                        model=model.value
-                    )
-                    
+                return VideoResponse(
+                    success=False,
+                    status="error",
+                    message=f"상태 조회 실패",
+                    model=model.value
+                )
+                
         except Exception as e:
-            print(f"❌ [STATUS CHECK ERROR] {e}")
             return VideoResponse(
                 success=False,
                 status="error",
                 message=f"상태 조회 오류: {str(e)}",
                 model=model.value
             )
-    
-    def _get_status_message(self, status: str) -> str:
-        """상태별 메시지"""
-        messages = {
-            "pending": "대기 중...",
-            "processing": "영상 생성 중...",
-            "completed": "영상 생성 완료!",
-            "failed": "영상 생성 실패"
-        }
-        return messages.get(status, "처리 중...")
 
 
 # ============================================
@@ -666,16 +721,12 @@ class GoAPIClient:
 # ============================================
 
 class HeyGenClient:
-    """
-    HeyGen Official API Client
-    AI 아바타 영상 생성
-    """
+    """HeyGen AI Avatar Client"""
     
     BASE_URL = "https://api.heygen.com"
     
     def __init__(self):
         self.api_key = os.getenv("HEYGEN_API_KEY")
-        
         if self.api_key:
             print("✅ [HeyGen] API 키 설정됨")
         else:
@@ -725,18 +776,11 @@ class HeyGenClient:
             }
         }
         
-        print(f"🎭 [HeyGen] 아바타 영상 생성 요청")
-        print(f"   스크립트: {request.script[:100]}...")
+        print(f"🎭 [HeyGen] 아바타 영상 생성")
         
         try:
             async with httpx.AsyncClient(timeout=60.0) as client:
-                response = await client.post(
-                    url,
-                    headers=self._get_headers(),
-                    json=body
-                )
-                
-                print(f"📡 [HeyGen] 응답: {response.status_code}")
+                response = await client.post(url, headers=self._get_headers(), json=body)
                 
                 if response.status_code == 200:
                     data = response.json()
@@ -750,15 +794,14 @@ class HeyGenClient:
                         model="heygen",
                         progress=10
                     )
-                else:
-                    return VideoResponse(
-                        success=False,
-                        status="error",
-                        message=f"HeyGen API 오류: {response.status_code}"
-                    )
                     
+                return VideoResponse(
+                    success=False,
+                    status="error",
+                    message=f"HeyGen API 오류: {response.status_code}"
+                )
+                
         except Exception as e:
-            print(f"❌ [HeyGen] 오류: {e}")
             return VideoResponse(
                 success=False,
                 status="error",
@@ -800,40 +843,19 @@ class HeyGenClient:
                         progress=progress,
                         model="heygen"
                     )
-                else:
-                    return VideoResponse(
-                        success=False,
-                        status="error",
-                        message=f"상태 조회 실패: {response.status_code}"
-                    )
                     
+                return VideoResponse(
+                    success=False,
+                    status="error",
+                    message=f"상태 조회 실패: {response.status_code}"
+                )
+                
         except Exception as e:
             return VideoResponse(
                 success=False,
                 status="error",
                 message=f"상태 조회 오류: {str(e)}"
             )
-    
-    async def list_avatars(self) -> List[Dict]:
-        """사용 가능한 아바타 목록"""
-        
-        if not self.is_available:
-            return []
-        
-        url = f"{self.BASE_URL}/v2/avatars"
-        
-        try:
-            async with httpx.AsyncClient(timeout=30.0) as client:
-                response = await client.get(url, headers=self._get_headers())
-                
-                if response.status_code == 200:
-                    data = response.json()
-                    return data.get("data", {}).get("avatars", [])
-                return []
-                
-        except Exception as e:
-            print(f"⚠️ [HeyGen] 아바타 목록 조회 실패: {e}")
-            return []
 
 
 # ============================================
@@ -841,23 +863,12 @@ class HeyGenClient:
 # ============================================
 
 class CreatomateClient:
-    """
-    Creatomate API Client
-    영상 편집 및 템플릿 렌더링
-    """
+    """Creatomate Video Editing Client"""
     
     BASE_URL = "https://api.creatomate.com/v1"
     
-    # 템플릿 매핑
-    TEMPLATES = {
-        "vertical_v1": "YOUR_VERTICAL_TEMPLATE_ID",
-        "horizontal_v1": "YOUR_HORIZONTAL_TEMPLATE_ID",
-        "square_v1": "YOUR_SQUARE_TEMPLATE_ID"
-    }
-    
     def __init__(self):
         self.api_key = os.getenv("CREATOMATE_API_KEY")
-        
         if self.api_key:
             print("✅ [Creatomate] API 키 설정됨")
         else:
@@ -873,30 +884,7 @@ class CreatomateClient:
     def is_available(self) -> bool:
         return bool(self.api_key)
     
-    def _select_template(self, aspect_ratio: AspectRatio) -> str:
-        """비율에 맞는 템플릿 선택"""
-        if aspect_ratio == AspectRatio.PORTRAIT:
-            return self.TEMPLATES["vertical_v1"]
-        elif aspect_ratio == AspectRatio.LANDSCAPE:
-            return self.TEMPLATES["horizontal_v1"]
-        else:
-            return self.TEMPLATES["square_v1"]
-    
-    def _analyze_brightness(self, video_url: str) -> str:
-        """영상 밝기 분석 (심플 버전)"""
-        # 실제 구현에서는 영상 프레임 분석 필요
-        # 여기서는 기본값 반환
-        return "dark"  # "dark" or "light"
-    
-    def _get_text_color(self, brightness: str) -> str:
-        """배경 밝기에 따른 텍스트 색상"""
-        return "#FFFFFF" if brightness == "dark" else "#000000"
-    
-    async def render_with_template(
-        self, 
-        request: EditRequest,
-        aspect_ratio: AspectRatio = AspectRatio.PORTRAIT
-    ) -> VideoResponse:
+    async def render_with_template(self, request: EditRequest, aspect_ratio: AspectRatio) -> VideoResponse:
         """템플릿 기반 렌더링"""
         
         if not self.is_available:
@@ -908,18 +896,7 @@ class CreatomateClient:
         
         url = f"{self.BASE_URL}/renders"
         
-        # 템플릿 선택
-        template_id = request.template_id or self._select_template(aspect_ratio)
-        
-        # 밝기 분석 및 텍스트 색상 결정
-        brightness = "dark"
-        if request.background_video_url:
-            brightness = self._analyze_brightness(request.background_video_url)
-        text_color = self._get_text_color(brightness)
-        
-        # 기본 수정사항
         modifications = {
-            "Text-Color": text_color,
             "Font-Family": "Pretendard",
             **request.modifications
         }
@@ -928,23 +905,15 @@ class CreatomateClient:
             modifications["Background-Video"] = request.background_video_url
         
         body = {
-            "template_id": template_id,
+            "template_id": request.template_id,
             "modifications": modifications
         }
         
         print(f"🎨 [Creatomate] 렌더링 요청")
-        print(f"   템플릿: {template_id}")
-        print(f"   텍스트 색상: {text_color}")
         
         try:
             async with httpx.AsyncClient(timeout=60.0) as client:
-                response = await client.post(
-                    url,
-                    headers=self._get_headers(),
-                    json=body
-                )
-                
-                print(f"📡 [Creatomate] 응답: {response.status_code}")
+                response = await client.post(url, headers=self._get_headers(), json=body)
                 
                 if response.status_code in [200, 201]:
                     data = response.json()
@@ -958,15 +927,14 @@ class CreatomateClient:
                         model="creatomate",
                         progress=10
                     )
-                else:
-                    return VideoResponse(
-                        success=False,
-                        status="error",
-                        message=f"Creatomate API 오류: {response.status_code}"
-                    )
                     
+                return VideoResponse(
+                    success=False,
+                    status="error",
+                    message=f"Creatomate API 오류: {response.status_code}"
+                )
+                
         except Exception as e:
-            print(f"❌ [Creatomate] 오류: {e}")
             return VideoResponse(
                 success=False,
                 status="error",
@@ -1005,53 +973,35 @@ class CreatomateClient:
                         progress=progress,
                         model="creatomate"
                     )
-                else:
-                    return VideoResponse(
-                        success=False,
-                        status="error",
-                        message=f"상태 조회 실패: {response.status_code}"
-                    )
                     
+                return VideoResponse(
+                    success=False,
+                    status="error",
+                    message=f"상태 조회 실패: {response.status_code}"
+                )
+                
         except Exception as e:
             return VideoResponse(
                 success=False,
                 status="error",
                 message=f"상태 조회 오류: {str(e)}"
             )
-    
-    async def auto_edit(
-        self,
-        project_id: str,
-        video_url: str,
-        headline: str,
-        subheadline: str = "",
-        brand_color: str = "#03C75A",
-        aspect_ratio: AspectRatio = AspectRatio.PORTRAIT
-    ) -> VideoResponse:
-        """자동 편집 (스마트 타이포그래피)"""
-        
-        request = EditRequest(
-            project_id=project_id,
-            template_id=self._select_template(aspect_ratio),
-            modifications={
-                "Headline": headline,
-                "Subheadline": subheadline,
-                "Brand-Color": brand_color
-            },
-            background_video_url=video_url
-        )
-        
-        return await self.render_with_template(request, aspect_ratio)
 
 
 # ============================================
-# Factory Engine (Unified Interface)
+# Hybrid Factory Engine (Main Interface)
 # ============================================
 
 class FactoryEngine:
     """
-    Factory Engine - 통합 인터페이스
-    Director의 결정에 따라 적절한 클라이언트 호출
+    Hybrid Factory Engine - 통합 인터페이스
+    
+    라우팅 로직:
+    1. model == 'kling' → Kling Official API (JWT) 우선, 실패 시 GoAPI 폴백
+    2. model == 'veo', 'sora', 'midjourney' → GoAPI
+    3. model == 'suno' → GoAPI Suno
+    4. Avatar → HeyGen
+    5. Edit → Creatomate
     """
     
     def __init__(self):
@@ -1060,37 +1010,86 @@ class FactoryEngine:
         self.heygen = HeyGenClient()
         self.creatomate = CreatomateClient()
         
-        print("🏭 [Factory Engine] 초기화 완료")
-        print(f"   Kling Official: {'✅' if self.kling_official.is_available else '❌'}")
-        print(f"   GoAPI: {'✅' if self.goapi.api_key else '❌'}")
-        print(f"   HeyGen: {'✅' if self.heygen.is_available else '❌'}")
-        print(f"   Creatomate: {'✅' if self.creatomate.is_available else '❌'}")
+        print("\n" + "="*60)
+        print("🏭 [HYBRID FACTORY ENGINE] 초기화 완료")
+        print("="*60)
+        print(f"   Kling Official (JWT): {'✅ 활성' if self.kling_official.is_available else '❌ 비활성'}")
+        print(f"   GoAPI (Veo/Sora/Suno/MJ): {'✅ 활성' if self.goapi.is_available else '❌ 비활성'}")
+        print(f"   HeyGen (Avatar): {'✅ 활성' if self.heygen.is_available else '❌ 비활성'}")
+        print(f"   Creatomate (Edit): {'✅ 활성' if self.creatomate.is_available else '❌ 비활성'}")
+        print("="*60 + "\n")
     
     async def generate_video(self, request: VideoRequest) -> VideoResponse:
         """
-        영상 생성 (자동 라우팅)
-        1. Kling 모델 + Official API 가능 → Kling Official 사용
-        2. 그 외 → GoAPI 사용
+        영상 생성 (하이브리드 라우팅)
+        
+        - Kling: Official API 우선 → GoAPI 폴백
+        - Veo, Sora, MJ: GoAPI 직접
         """
         
-        # Kling Official 우선 시도
-        if request.model == VideoModel.KLING and self.kling_official.is_available:
-            print("🎯 [Factory] Kling Official API 사용")
-            result = await self.kling_official.generate_video(request)
-            if result.success:
-                return result
-            print("⚠️ [Factory] Kling Official 실패, GoAPI로 폴백")
+        print(f"\n{'='*60}")
+        print(f"🎬 [FACTORY] generate_video 요청")
+        print(f"   Model: {request.model.value}")
+        print(f"   Image: {'있음' if request.image_url else '없음'}")
+        print(f"{'='*60}")
         
-        # GoAPI 사용
-        print(f"🎯 [Factory] GoAPI 사용 (모델: {request.model.value})")
-        return await self.goapi.generate_video(request)
+        # Kling: Official API 우선
+        if request.model == VideoModel.KLING:
+            if self.kling_official.is_available:
+                print("🎯 [ROUTING] Kling Official API 사용")
+                result = await self.kling_official.generate_video(request)
+                
+                if result.success:
+                    result.model = "kling_official"
+                    return result
+                    
+                print("⚠️ [ROUTING] Kling Official 실패, GoAPI 폴백")
+            
+            # GoAPI 폴백
+            if self.goapi.is_available:
+                print("🎯 [ROUTING] GoAPI Kling 폴백")
+                return await self.goapi.generate_video(request)
+            
+            return VideoResponse(
+                success=False,
+                status="error",
+                message="Kling API 사용 불가 (Official + GoAPI 모두 실패)"
+            )
+        
+        # Veo, Sora, Midjourney, etc: GoAPI
+        if self.goapi.is_available:
+            print(f"🎯 [ROUTING] GoAPI {request.model.value}")
+            return await self.goapi.generate_video(request)
+        
+        return VideoResponse(
+            success=False,
+            status="error",
+            message="GoAPI 키가 설정되지 않았습니다."
+        )
+    
+    async def generate_music(self, request: MusicRequest) -> MusicResponse:
+        """음악 생성 (Suno via GoAPI)"""
+        
+        if not self.goapi.is_available:
+            return MusicResponse(
+                success=False,
+                status="error",
+                message="GoAPI 키가 설정되지 않았습니다."
+            )
+        
+        print("🎯 [ROUTING] GoAPI Suno")
+        return await self.goapi.generate_music(request)
     
     async def check_video_status(self, task_id: str, model: VideoModel, source: str = "auto") -> VideoResponse:
         """영상 상태 확인"""
         
-        if source == "kling_official" or (source == "auto" and self.kling_official.is_available and model == VideoModel.KLING):
-            return await self.kling_official.check_status(task_id)
+        # Kling Official 상태 확인
+        if source == "kling_official" or (source == "auto" and model == VideoModel.KLING and self.kling_official.is_available):
+            result = await self.kling_official.check_status(task_id)
+            if result.success:
+                return result
         
+        # GoAPI 상태 확인
         return await self.goapi.check_status(task_id, model)
     
     async def create_avatar(self, request: AvatarRequest) -> VideoResponse:
@@ -1111,23 +1110,62 @@ class FactoryEngine:
     
     def get_available_models(self) -> List[Dict]:
         """사용 가능한 모델 목록"""
-        models = []
-        
-        for model in VideoModel:
-            available = True
-            source = "goapi"
-            
-            if model == VideoModel.KLING and self.kling_official.is_available:
-                source = "kling_official"
-            elif not self.goapi.api_key:
-                available = False
-            
-            models.append({
-                "id": model.value,
-                "name": model.value.upper(),
-                "available": available,
-                "source": source
-            })
+        models = [
+            {
+                "id": "kling",
+                "name": "Kling (Official)",
+                "type": "video",
+                "available": self.kling_official.is_available or self.goapi.is_available,
+                "source": "kling_official" if self.kling_official.is_available else "goapi",
+                "features": ["text2video", "image2video"],
+                "description": "고품질 영상 생성, 이미지-투-비디오 지원"
+            },
+            {
+                "id": "veo",
+                "name": "Veo 3.1 (Google)",
+                "type": "video",
+                "available": self.goapi.is_available,
+                "source": "goapi",
+                "features": ["text2video"],
+                "description": "Google의 최신 영상 생성 모델"
+            },
+            {
+                "id": "sora",
+                "name": "Sora 2 (OpenAI)",
+                "type": "video",
+                "available": self.goapi.is_available,
+                "source": "goapi",
+                "features": ["text2video"],
+                "description": "OpenAI의 고품질 영상 생성"
+            },
+            {
+                "id": "midjourney",
+                "name": "Midjourney",
+                "type": "image",
+                "available": self.goapi.is_available,
+                "source": "goapi",
+                "features": ["text2image"],
+                "description": "고품질 이미지 생성"
+            },
+            {
+                "id": "suno",
+                "name": "Suno (Music)",
+                "type": "audio",
+                "available": self.goapi.is_available,
+                "source": "goapi",
+                "features": ["music_generation"],
+                "description": "AI 음악 생성"
+            },
+            {
+                "id": "heygen",
+                "name": "HeyGen (Avatar)",
+                "type": "avatar",
+                "available": self.heygen.is_available,
+                "source": "heygen",
+                "features": ["avatar_video"],
+                "description": "AI 아바타 영상 생성"
+            }
+        ]
         
         return models
     
@@ -1137,12 +1175,10 @@ class FactoryEngine:
 
 
 # ============================================
-# Singleton Instances
+# Singleton Instance
 # ============================================
 
 _factory_instance = None
-_goapi_instance = None
-_creatomate_instance = None
 
 def get_factory() -> FactoryEngine:
     global _factory_instance
@@ -1150,18 +1186,7 @@ def get_factory() -> FactoryEngine:
         _factory_instance = FactoryEngine()
     return _factory_instance
 
-def get_goapi() -> GoAPIClient:
-    global _goapi_instance
-    if _goapi_instance is None:
-        _goapi_instance = GoAPIClient()
-    return _goapi_instance
 
-def get_creatomate() -> CreatomateClient:
-    global _creatomate_instance
-    if _creatomate_instance is None:
-        _creatomate_instance = CreatomateClient()
-    return _creatomate_instance
-
-
-# Backward compatibility exports
+# Backward compatibility
 GoAPIEngine = GoAPIClient
+GoAPIClient = GoAPIClient

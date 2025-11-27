@@ -127,13 +127,15 @@ const ASPECT_RATIOS = [
   { id: "4:5", name: "4:5 (피드)", width: 1080, height: 1350 },
 ];
 
+// Hybrid Engine - 모델 목록
 const AI_MODELS = [
-  { id: "auto", name: "🧠 Auto (AI Director)", description: "자동 최적 선택" },
-  { id: "kling", name: "Kling", description: "범용 영상 생성" },
-  { id: "veo", name: "Veo 3.1", description: "리얼리즘/액션" },
-  { id: "sora", name: "Sora 2", description: "시네마틱" },
-  { id: "hailuo", name: "Hailuo", description: "고속 생성" },
-  { id: "heygen", name: "HeyGen", description: "AI 아바타" },
+  { id: "auto", name: "🧠 Auto (AI Director)", description: "AI가 최적 모델 자동 선택", type: "video" },
+  { id: "kling", name: "🎬 Kling (Official)", description: "공식 API - I2V 지원", type: "video", badge: "Official" },
+  { id: "veo", name: "🌟 Veo 3.1 (Google)", description: "리얼리즘/물리 시뮬레이션", type: "video" },
+  { id: "sora", name: "🎥 Sora 2 (OpenAI)", description: "시네마틱/고품질", type: "video" },
+  { id: "midjourney", name: "🖼️ Midjourney", description: "고품질 이미지 생성", type: "image" },
+  { id: "suno", name: "🎵 Suno (Music)", description: "AI 음악 생성", type: "audio" },
+  { id: "heygen", name: "🎭 HeyGen", description: "AI 아바타 영상", type: "avatar" },
 ];
 
 // ============================================

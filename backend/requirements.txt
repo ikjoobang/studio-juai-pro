@@ -1,4 +1,4 @@
-# Studio Juai PRO - Backend Dependencies
+# Studio Juai PRO - Backend Dependencies v5.0
 # Python 3.11+
 
 # Web Framework
@@ -6,7 +6,7 @@ fastapi>=0.109.0
 uvicorn[standard]>=0.27.0
 python-multipart>=0.0.6
 
-# Database
+# Database & Storage
 supabase>=2.3.0
 
 # HTTP Client
@@ -16,12 +16,11 @@ aiohttp>=3.9.0
 # Data Validation
 pydantic>=2.5.0
 
+# Authentication
+PyJWT>=2.8.0  # Kling Official API JWT 인증용
+
 # Utilities
 python-dotenv>=1.0.0
-
-# Video Processing (Optional - for local processing)
-# moviepy>=1.0.3
-# ffmpeg-python>=0.2.0
 
 # AI/ML
 google-generativeai>=0.3.0

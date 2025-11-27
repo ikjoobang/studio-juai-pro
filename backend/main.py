@@ -29,8 +29,8 @@ from supabase import create_client, Client
 from factory_engine import (
     FactoryEngine, GoAPIClient, CreatomateClient, HeyGenClient,
     VideoRequest, VideoResponse, VideoModel, AspectRatio,
-    AvatarRequest, EditRequest, STYLE_PRESETS,
-    get_factory, get_goapi, get_creatomate
+    AvatarRequest, EditRequest, MusicRequest, MusicResponse, STYLE_PRESETS,
+    get_factory
 )
 
 from director import (
@@ -82,17 +82,13 @@ trend_store: List[str] = []
 # Initialize on startup
 factory: FactoryEngine = None
 director: AIDirector = None
-goapi: GoAPIClient = None
-creatomate: CreatomateClient = None
 supabase: Client = None
 
 @app.on_event("startup")
 async def startup():
-    global factory, director, goapi, creatomate, supabase
+    global factory, director, supabase
     factory = get_factory()
     director = get_director()
-    goapi = get_goapi()
-    creatomate = get_creatomate()
     
     # Supabase 클라이언트 초기화
     supabase_url = os.getenv("SUPABASE_URL")
@@ -105,7 +101,7 @@ async def startup():
     
     # 기본 프롬프트 템플릿 로드
     _load_default_templates()
-    print("🚀 [Studio Juai PRO] 서버 시작됨")
+    print("🚀 [Studio Juai PRO v5.0] 서버 시작됨 - Hybrid Engine Active")
 
 
 def _load_default_templates():
@@ -1315,6 +1311,198 @@ async def suggest_bgm(video_description: str, mood: str = "auto"):
         "video_description": video_description,
         "mood": mood,
         "bgm_prompt": bgm_prompt
+    }
+
+
+# ============================================
+# Suno Music Generation
+# ============================================
+
+class MusicGenerateRequest(BaseModel):
+    project_id: str
+    prompt: str
+    style: str = "pop"  # pop, rock, electronic, classical, ambient, cinematic
+    duration: int = 30  # 15-120 seconds
+    instrumental: bool = False
+
+
+@app.post("/api/music/generate")
+async def generate_music(request: MusicGenerateRequest, background_tasks: BackgroundTasks):
+    """
+    Suno AI 음악 생성 (via GoAPI)
+    
+    - 프롬프트 기반 음악 생성
+    - 다양한 스타일 지원
+    - 최대 120초 길이
+    """
+    
+    music_request = MusicRequest(
+        prompt=request.prompt,
+        style=request.style,
+        duration=request.duration,
+        instrumental=request.instrumental
+    )
+    
+    print(f"🎵 [MUSIC] 음악 생성 요청")
+    print(f"   프로젝트: {request.project_id}")
+    print(f"   프롬프트: {request.prompt[:80]}...")
+    print(f"   스타일: {request.style}")
+    
+    result = await factory.generate_music(music_request)
+    
+    if not result.success:
+        raise HTTPException(status_code=500, detail=f"음악 생성 실패: {result.message}")
+    
+    # Task 저장
+    task_store[f"music_{request.project_id}"] = {
+        "task_id": result.task_id,
+        "model": "suno",
+        "status": "processing",
+        "progress": 10,
+        "audio_url": None,
+        "created_at": datetime.utcnow().isoformat()
+    }
+    
+    # 백그라운드 폴링
+    background_tasks.add_task(poll_music_status, request.project_id, result.task_id)
+    
+    return {
+        "success": True,
+        "project_id": request.project_id,
+        "task_id": result.task_id,
+        "status": "processing",
+        "message": "Suno 음악 생성이 시작되었습니다."
+    }
+
+
+async def poll_music_status(project_id: str, task_id: str):
+    """Suno 음악 상태 폴링"""
+    max_attempts = 60  # 최대 5분
+    poll_interval = 5
+    
+    for attempt in range(max_attempts):
+        await asyncio.sleep(poll_interval)
+        
+        # GoAPI 상태 확인
+        url = f"https://api.goapi.ai/api/v1/task/{task_id}"
+        headers = {
+            "x-api-key": os.getenv("GOAPI_KEY")
+        }
+        
+        try:
+            async with httpx.AsyncClient(timeout=30.0) as client:
+                response = await client.get(url, headers=headers)
+                
+                if response.status_code == 200:
+                    data = response.json()
+                    
+                    if data.get("code") == 200:
+                        task_data = data.get("data", {})
+                        status = task_data.get("status", "processing")
+                        output = task_data.get("output", {})
+                        
+                        store_key = f"music_{project_id}"
+                        if store_key in task_store:
+                            task_store[store_key]["status"] = status
+                            
+                            if status in ["completed", "succeed"]:
+                                # 오디오 URL 추출
+                                audio_url = output.get("audio_url") or output.get("url")
+                                task_store[store_key]["audio_url"] = audio_url
+                                task_store[store_key]["progress"] = 100
+                                print(f"✅ [MUSIC] 음악 생성 완료: {audio_url}")
+                                break
+                            elif status == "failed":
+                                task_store[store_key]["progress"] = 0
+                                print(f"❌ [MUSIC] 음악 생성 실패")
+                                break
+                            else:
+                                elapsed = (attempt + 1) * poll_interval
+                                task_store[store_key]["progress"] = min(90, 10 + attempt * 3)
+                                task_store[store_key]["message"] = f"생성 중... ({elapsed}초 경과)"
+                                
+        except Exception as e:
+            print(f"⚠️ [MUSIC] 폴링 오류: {e}")
+
+
+@app.get("/api/music/progress/{project_id}")
+async def get_music_progress(project_id: str):
+    """음악 생성 진행률 조회"""
+    
+    store_key = f"music_{project_id}"
+    task_data = task_store.get(store_key)
+    
+    if not task_data:
+        raise HTTPException(status_code=404, detail="음악 작업을 찾을 수 없습니다.")
+    
+    return {
+        "success": True,
+        "project_id": project_id,
+        "task_id": task_data.get("task_id"),
+        "status": task_data.get("status", "processing"),
+        "progress": task_data.get("progress", 0),
+        "audio_url": task_data.get("audio_url"),
+        "message": task_data.get("message", "처리 중...")
+    }
+
+
+# ============================================
+# Hybrid Engine Status
+# ============================================
+
+@app.get("/api/engine/status")
+async def get_engine_status():
+    """
+    하이브리드 엔진 상태 조회
+    - 각 API 연결 상태
+    - 사용 가능한 모델 목록
+    """
+    
+    return {
+        "success": True,
+        "engine": "Hybrid Factory Engine v5.0",
+        "status": {
+            "kling_official": {
+                "active": factory.kling_official.is_available if factory else False,
+                "endpoint": "https://api.klingai.com",
+                "auth": "JWT (HS256)",
+                "features": ["text2video", "image2video"]
+            },
+            "goapi": {
+                "active": factory.goapi.is_available if factory else False,
+                "endpoint": "https://api.goapi.ai/api/v1",
+                "models": ["veo3.1", "sora2", "suno", "midjourney", "kling", "hailuo", "luma"]
+            },
+            "heygen": {
+                "active": factory.heygen.is_available if factory else False,
+                "endpoint": "https://api.heygen.com",
+                "features": ["avatar_video"]
+            },
+            "creatomate": {
+                "active": factory.creatomate.is_available if factory else False,
+                "endpoint": "https://api.creatomate.com/v1",
+                "features": ["video_editing", "template_render"]
+            },
+            "gemini": {
+                "active": bool(os.getenv("GOOGLE_GEMINI_API_KEY")),
+                "endpoint": "Google Generative AI",
+                "features": ["ai_director", "prompt_optimization"]
+            },
+            "supabase": {
+                "active": supabase is not None,
+                "endpoint": os.getenv("SUPABASE_URL", "Not configured"),
+                "features": ["image_upload", "storage"]
+            }
+        },
+        "routing": {
+            "kling": "Kling Official (JWT) → GoAPI fallback",
+            "veo": "GoAPI direct",
+            "sora": "GoAPI direct",
+            "suno": "GoAPI direct",
+            "midjourney": "GoAPI direct",
+            "avatar": "HeyGen direct",
+            "edit": "Creatomate direct"
+        }
     }
 
 
