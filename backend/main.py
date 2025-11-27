@@ -1741,16 +1741,15 @@ async def generate_music(request: MusicGenerateRequest, background_tasks: Backgr
     result = await factory.generate_music(music_request)
     
     if not result.success:
-        # Suno 503 오류인 경우 사용자 친화적 메시지
+        # Fallback이 모두 실패한 경우 상세 메시지 표시
         error_msg = result.message
-        if "503" in error_msg:
-            error_msg = "Suno AI 서비스가 일시적으로 과부하 상태입니다. 잠시 후 다시 시도해주세요. (GoAPI 서비스 503)"
-        raise HTTPException(status_code=503, detail=f"음악 생성 일시 중단: {error_msg}")
+        print(f"❌ [MUSIC API] 최종 실패: {error_msg}")
+        raise HTTPException(status_code=503, detail=f"음악 생성 실패 (Fallback 포함): {error_msg}")
     
-    # Task 저장
+    # Task 저장 (Fallback으로 Udio가 선택될 수 있음)
     task_store[f"music_{request.project_id}"] = {
         "task_id": result.task_id,
-        "model": "suno",
+        "model": result.model,  # suno 또는 udio
         "status": "processing",
         "progress": 10,
         "audio_url": None,

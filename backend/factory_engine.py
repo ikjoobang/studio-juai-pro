@@ -716,11 +716,15 @@ class GoAPIClient:
             fallback_result.message = f"[Fallback] {fallback_result.message}"
             return fallback_result
         
-        # 모두 실패
+        # 모두 실패 - 상세 메시지 포함
+        print(f"❌ [MUSIC] Suno, Udio 모두 실패")
+        print(f"   Suno 오류: {result.message}")
+        print(f"   Udio 오류: {fallback_result.message}")
+        
         return MusicResponse(
             success=False,
             status="error",
-            message=f"음악 생성 실패: Suno, Udio 모두 사용 불가. 원인: {result.message}"
+            message=f"Suno, Udio 모두 실패. Suno: {result.message[:100]} / Udio: {fallback_result.message[:100]}"
         )
     
     async def generate_image(self, request: ImageRequest) -> ImageResponse:
