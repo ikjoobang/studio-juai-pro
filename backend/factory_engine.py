@@ -460,9 +460,9 @@ class GoAPIClient:
         AudioModel.UDIO: {"task_type": "generate_music", "model": "udio"},
     }
     
-    # 이미지 모델 설정
+    # 이미지 모델 설정 (GoAPI 공식 문서 기준)
     IMAGE_CONFIG = {
-        ImageModel.FLUX: {"task_type": "flux-1.1-pro", "model": "flux"},
+        ImageModel.FLUX: {"task_type": "txt2img", "model": "flux-1.1-pro"},  # Flux.1 Pro
         ImageModel.MIDJOURNEY: {"task_type": "imagine", "model": "midjourney"},
         ImageModel.DALLE: {"task_type": "generations", "model": "dall-e-3"},
     }
@@ -736,27 +736,54 @@ class GoAPIClient:
         config = self.IMAGE_CONFIG.get(request.model, self.IMAGE_CONFIG[ImageModel.FLUX])
         
         url = f"{self.BASE_URL}/task"
-        body = {
-            "model": config["model"],
-            "task_type": config["task_type"],
-            "input": {
-                "prompt": request.prompt,
-                "aspect_ratio": request.aspect_ratio.value
-            }
-        }
         
-        # 모델별 파라미터
+        # 모델별 body 구성
         if request.model == ImageModel.FLUX:
-            body["input"]["output_format"] = "png"
-            body["input"]["safety_tolerance"] = 2
-            if request.negative_prompt:
-                body["input"]["negative_prompt"] = request.negative_prompt
+            # Flux.1 Pro - GoAPI 공식 파라미터
+            body = {
+                "model": "flux-1.1-pro",
+                "task_type": "txt2img",
+                "input": {
+                    "prompt": request.prompt,
+                    "width": 1024 if request.aspect_ratio == AspectRatio.LANDSCAPE else 768,
+                    "height": 768 if request.aspect_ratio == AspectRatio.LANDSCAPE else 1024,
+                    "num_inference_steps": 28,
+                    "guidance_scale": 3.5,
+                }
+            }
         elif request.model == ImageModel.MIDJOURNEY:
-            body["task_type"] = "imagine"
-            body["input"]["process_mode"] = "fast"
+            body = {
+                "model": "midjourney",
+                "task_type": "imagine",
+                "input": {
+                    "prompt": request.prompt,
+                    "aspect_ratio": request.aspect_ratio.value,
+                    "process_mode": "fast"
+                }
+            }
         elif request.model == ImageModel.DALLE:
-            body["input"]["size"] = "1024x1792" if request.aspect_ratio == AspectRatio.PORTRAIT else "1792x1024"
-            body["input"]["quality"] = "hd"
+            size = "1024x1792" if request.aspect_ratio == AspectRatio.PORTRAIT else "1792x1024"
+            if request.aspect_ratio == AspectRatio.SQUARE:
+                size = "1024x1024"
+            body = {
+                "model": "dall-e-3",
+                "task_type": "generations",
+                "input": {
+                    "prompt": request.prompt,
+                    "size": size,
+                    "quality": "hd"
+                }
+            }
+        else:
+            # 기본 (fallback)
+            body = {
+                "model": config["model"],
+                "task_type": config["task_type"],
+                "input": {
+                    "prompt": request.prompt,
+                    "aspect_ratio": request.aspect_ratio.value
+                }
+            }
         
         print(f"🖼️ [GoAPI {request.model.value.upper()}] 이미지 생성 요청")
         print(f"   프롬프트: {request.prompt[:80]}...")
@@ -780,10 +807,14 @@ class GoAPIClient:
                             model=request.model.value
                         )
                 
+                # 상세 오류 로깅
+                error_detail = response.text[:500] if response.text else "No response body"
+                print(f"❌ [Image API] 오류: {response.status_code} - {error_detail}")
+                
                 return ImageResponse(
                     success=False,
                     status="error",
-                    message=f"이미지 API 오류: {response.status_code}",
+                    message=f"이미지 API 오류: {response.status_code} - {error_detail[:200]}",
                     model=request.model.value
                 )
                 
