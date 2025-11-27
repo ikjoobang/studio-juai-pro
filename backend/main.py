@@ -1070,25 +1070,28 @@ async def auto_edit_video(request: EditVideoRequest, background_tasks: Backgroun
     if not result.success:
         raise HTTPException(status_code=500, detail=f"편집 실패: {result.message}")
     
-    # Task 저장
+    # Task 저장 (video_url이 이미 있으면 저장)
     task_store[f"edit_{request.project_id}"] = {
         "task_id": result.task_id,
         "model": "creatomate",
-        "status": "processing",
-        "progress": 10,
-        "video_url": None,
+        "status": result.status,
+        "progress": result.progress,
+        "video_url": result.video_url,
         "created_at": datetime.utcnow().isoformat()
     }
     
-    # 백그라운드 폴링
-    background_tasks.add_task(poll_edit_status, request.project_id, result.task_id)
+    # completed 상태가 아닐 때만 백그라운드 폴링
+    if result.status != "completed":
+        background_tasks.add_task(poll_edit_status, request.project_id, result.task_id)
     
     return {
         "success": True,
         "project_id": request.project_id,
         "render_id": result.task_id,
-        "status": "processing",
-        "message": "Creatomate 편집이 시작되었습니다."
+        "status": result.status,
+        "progress": result.progress,
+        "video_url": result.video_url,
+        "message": result.message
     }
 
 

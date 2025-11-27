@@ -1065,17 +1065,33 @@ class CreatomateClient:
             async with httpx.AsyncClient(timeout=60.0) as client:
                 response = await client.post(url, headers=self._get_headers(), json=body)
                 
-                if response.status_code in [200, 201]:
+                # Creatomate는 202 Accepted도 성공 응답
+                if response.status_code in [200, 201, 202]:
                     data = response.json()
-                    render_id = data[0].get("id") if isinstance(data, list) else data.get("id")
+                    
+                    # 리스트로 오는 경우와 단일 객체로 오는 경우 모두 처리
+                    if isinstance(data, list) and len(data) > 0:
+                        render = data[0]
+                        render_id = render.get("id")
+                        video_url = render.get("url")
+                        status = render.get("status", "processing")
+                    else:
+                        render_id = data.get("id")
+                        video_url = data.get("url")
+                        status = data.get("status", "processing")
+                    
+                    # status가 planned/rendering이면 processing, completed면 completed
+                    mapped_status = "completed" if status == "completed" else "processing"
+                    progress = 100 if status == "completed" else 30
                     
                     return VideoResponse(
                         success=True,
                         task_id=render_id,
-                        status="processing",
-                        message="Creatomate 편집 시작",
+                        video_url=video_url,  # URL이 있으면 바로 반환
+                        status=mapped_status,
+                        message=f"Creatomate 편집 {'완료' if status == 'completed' else '진행 중'} (상태: {status})",
                         model="creatomate",
-                        progress=10
+                        progress=progress
                     )
                 
                 return VideoResponse(
