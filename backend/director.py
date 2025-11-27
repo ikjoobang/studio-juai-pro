@@ -294,15 +294,28 @@ class AIDirector:
         return keyword_scores
     
     def _route_to_tool(self, intent: IntentCategory, user_input: str, confidence: float) -> RoutingDecision:
-        """의도에 따른 툴 라우팅"""
+        """
+        의도에 따른 툴 라우팅
         
+        GoAPI 2024 지원 모델:
+        - Kling: text-to-video ✅
+        - Veo3.1: image-to-video (이미지 필수) 
+        - Sora2: text-to-video ✅
+        - Hailuo: text-to-video ✅
+        - Luma: text-to-video ✅
+        
+        ⚠️ Veo3.1은 이미지가 필요하므로 text-to-video인 경우 Kling 사용
+        """
+        
+        # Text-to-video 전용 라우팅 맵
+        # Veo3.1은 image-to-video이므로 text 요청시 Kling 사용
         routing_map = {
-            IntentCategory.REALISM_ACTION: (ToolType.VEO, None, "물리 법칙 적용이 필수적이므로 Veo 호출"),
-            IntentCategory.CHARACTER_PRODUCT: (ToolType.KLING, ToolType.MIDJOURNEY, "동일한 캐릭터 유지를 위해 이미지 생성 후 영상화"),
-            IntentCategory.INFORMATIONAL: (ToolType.HEYGEN, None, "스크립트 기반 입모양 맞춤 아바타 생성"),
-            IntentCategory.CINEMATIC: (ToolType.SORA, None, "긴 호흡의 고화질 배경 생성"),
+            IntentCategory.REALISM_ACTION: (ToolType.KLING, None, "액션/리얼리즘 - Kling 고품질 text-to-video"),
+            IntentCategory.CHARACTER_PRODUCT: (ToolType.KLING, ToolType.MIDJOURNEY, "인물/제품 일관성 - 이미지 생성 후 영상화"),
+            IntentCategory.INFORMATIONAL: (ToolType.HEYGEN, None, "정보 전달 - 스크립트 기반 아바타"),
+            IntentCategory.CINEMATIC: (ToolType.SORA, None, "시네마틱 - Sora2 영화적 표현"),
             IntentCategory.MUSIC_AUDIO: (ToolType.SUNO, None, "음악/BGM 생성"),
-            IntentCategory.UNKNOWN: (ToolType.KLING, None, "기본 영상 생성 툴 사용")
+            IntentCategory.UNKNOWN: (ToolType.KLING, None, "기본 영상 생성 - Kling")
         }
         
         primary, secondary, reasoning = routing_map.get(

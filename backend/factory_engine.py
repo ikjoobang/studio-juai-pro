@@ -326,11 +326,12 @@ class GoAPIClient:
     
     BASE_URL = "https://api.goapi.ai/api/v1"
     
-    # 모델별 task_type 매핑
+    # 모델별 task_type 매핑 (GoAPI 2024 형식)
+    # 참조: https://goapi.ai/dashboard - Video Models
     MODEL_CONFIG = {
         VideoModel.KLING: {"task_type": "video_generation", "model": "kling"},
-        VideoModel.VEO: {"task_type": "video_generation", "model": "veo"},
-        VideoModel.SORA: {"task_type": "video_generation", "model": "sora"},
+        VideoModel.VEO: {"task_type": "image_to_video", "model": "veo3.1"},      # Veo3.1 - image_to_video
+        VideoModel.SORA: {"task_type": "sora2-video", "model": "sora2"},          # Sora2 - sora2-video
         VideoModel.HAILUO: {"task_type": "video_generation", "model": "hailuo"},
         VideoModel.LUMA: {"task_type": "video_generation", "model": "luma"},
         VideoModel.MIDJOURNEY: {"task_type": "image_generation", "model": "midjourney"},
@@ -352,7 +353,7 @@ class GoAPIClient:
         }
     
     def _build_request_body(self, request: VideoRequest) -> Dict[str, Any]:
-        """GoAPI 요청 본문 생성"""
+        """GoAPI 요청 본문 생성 - 모델별 형식 지원"""
         
         config = self.MODEL_CONFIG.get(request.model, self.MODEL_CONFIG[VideoModel.KLING])
         
@@ -360,20 +361,41 @@ class GoAPIClient:
         preset = STYLE_PRESETS.get(request.style_preset, STYLE_PRESETS["warm_film"])
         enhanced_prompt = f"{request.prompt}, {preset['prompt_suffix']}"
         
+        # 기본 body 구조
         body = {
             "model": config["model"],
             "task_type": config["task_type"],
             "input": {
                 "prompt": enhanced_prompt,
-                "aspect_ratio": request.aspect_ratio.value,
-                "duration": request.duration
             }
         }
+        
+        # Veo3.1 - image_to_video 형식 (이미지 필수)
+        if request.model == VideoModel.VEO:
+            if not request.image_url:
+                # 이미지 없으면 Kling으로 폴백 (text-to-video)
+                print("⚠️ [Veo3.1] 이미지 없음 → Kling으로 폴백")
+                config = self.MODEL_CONFIG[VideoModel.KLING]
+                body["model"] = config["model"]
+                body["task_type"] = config["task_type"]
+            else:
+                body["input"]["image_url"] = request.image_url
+        
+        # Sora2 - sora2-video 형식
+        elif request.model == VideoModel.SORA:
+            # Sora2는 text-to-video 지원
+            pass
+        
+        # 일반 모델 (Kling, Hailuo, Luma)
+        else:
+            body["input"]["aspect_ratio"] = request.aspect_ratio.value
+            body["input"]["duration"] = request.duration
         
         if request.negative_prompt:
             body["input"]["negative_prompt"] = request.negative_prompt
         
-        if request.image_url:
+        # 이미지 URL 추가 (Veo 외 모델)
+        if request.image_url and request.model != VideoModel.VEO:
             body["input"]["image_url"] = request.image_url
         
         return body
