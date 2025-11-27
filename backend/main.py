@@ -11,7 +11,7 @@ Features:
 - Admin CMS for Prompt/Vendor/Trend Management
 """
 
-from fastapi import FastAPI, HTTPException, BackgroundTasks, Depends
+from fastapi import FastAPI, HTTPException, BackgroundTasks, Depends, UploadFile, File, Form
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 from typing import Optional, List, Dict, Any
@@ -20,8 +20,11 @@ import httpx
 import os
 import json
 import asyncio
+import uuid
+import base64
 from enum import Enum
 from dotenv import load_dotenv
+from supabase import create_client, Client
 
 from factory_engine import (
     FactoryEngine, GoAPIClient, CreatomateClient, HeyGenClient,
@@ -81,14 +84,24 @@ factory: FactoryEngine = None
 director: AIDirector = None
 goapi: GoAPIClient = None
 creatomate: CreatomateClient = None
+supabase: Client = None
 
 @app.on_event("startup")
 async def startup():
-    global factory, director, goapi, creatomate
+    global factory, director, goapi, creatomate, supabase
     factory = get_factory()
     director = get_director()
     goapi = get_goapi()
     creatomate = get_creatomate()
+    
+    # Supabase 클라이언트 초기화
+    supabase_url = os.getenv("SUPABASE_URL")
+    supabase_key = os.getenv("SUPABASE_KEY")
+    if supabase_url and supabase_key:
+        supabase = create_client(supabase_url, supabase_key)
+        print("✅ [Supabase] 클라이언트 초기화 완료")
+    else:
+        print("⚠️ [Supabase] 환경 변수 없음 - 업로드 기능 불가")
     
     # 기본 프롬프트 템플릿 로드
     _load_default_templates()
@@ -171,7 +184,8 @@ class VideoGenerateRequest(BaseModel):
     aspect_ratio: str = "9:16"
     duration: int = 5
     style_preset: str = "warm_film"
-    image_url: Optional[str] = None
+    image_url: Optional[str] = None  # Legacy field
+    source_image_url: Optional[str] = None  # 소스 이미지 URL (Image-to-Video용)
     use_director: bool = True  # AI Director 사용 여부
 
 
@@ -304,6 +318,180 @@ async def admin_login(request: AuthRequest):
         }
     else:
         raise HTTPException(status_code=401, detail="비밀번호가 올바르지 않습니다.")
+
+
+# ============================================
+# File Upload (Supabase Storage)
+# ============================================
+
+@app.post("/api/upload")
+async def upload_image(file: UploadFile = File(...)):
+    """
+    소스 이미지 업로드 (Supabase Storage)
+    
+    - Image-to-Video 기능을 위한 이미지 업로드
+    - Supabase Storage의 source_images 버킷에 저장
+    - Public URL 반환
+    """
+    
+    if not supabase:
+        raise HTTPException(status_code=503, detail="Supabase Storage가 설정되지 않았습니다.")
+    
+    # 파일 검증
+    allowed_types = ["image/jpeg", "image/png", "image/webp", "image/gif"]
+    if file.content_type not in allowed_types:
+        raise HTTPException(
+            status_code=400, 
+            detail=f"허용되지 않는 파일 형식입니다. 허용: {', '.join(allowed_types)}"
+        )
+    
+    # 파일 크기 제한 (10MB)
+    max_size = 10 * 1024 * 1024
+    content = await file.read()
+    if len(content) > max_size:
+        raise HTTPException(status_code=400, detail="파일 크기는 10MB를 초과할 수 없습니다.")
+    
+    # 파일명 생성 (UUID + 확장자)
+    ext = file.filename.split('.')[-1] if '.' in file.filename else 'jpg'
+    unique_filename = f"{uuid.uuid4()}.{ext}"
+    storage_path = f"uploads/{unique_filename}"
+    
+    try:
+        # Supabase Storage 업로드
+        bucket_name = "source-images"
+        
+        # 버킷 존재 여부 확인 및 생성 시도
+        try:
+            result = supabase.storage.from_(bucket_name).upload(
+                path=storage_path,
+                file=content,
+                file_options={"content-type": file.content_type}
+            )
+        except Exception as e:
+            # 버킷이 없으면 생성 시도 (첫 업로드 시)
+            if "Bucket not found" in str(e) or "not found" in str(e).lower():
+                print(f"⚠️ [Upload] 버킷 '{bucket_name}' 없음 - 생성 시도")
+                try:
+                    supabase.storage.create_bucket(bucket_name, options={"public": True})
+                    result = supabase.storage.from_(bucket_name).upload(
+                        path=storage_path,
+                        file=content,
+                        file_options={"content-type": file.content_type}
+                    )
+                except Exception as create_err:
+                    print(f"❌ [Upload] 버킷 생성 실패: {create_err}")
+                    raise
+            else:
+                raise
+        
+        # Public URL 생성
+        supabase_url = os.getenv("SUPABASE_URL")
+        public_url = f"{supabase_url}/storage/v1/object/public/{bucket_name}/{storage_path}"
+        
+        print(f"✅ [Upload] 이미지 업로드 성공: {public_url}")
+        
+        return {
+            "success": True,
+            "message": "이미지가 업로드되었습니다.",
+            "url": public_url,
+            "filename": unique_filename,
+            "size": len(content),
+            "content_type": file.content_type
+        }
+        
+    except Exception as e:
+        print(f"❌ [Upload] 업로드 실패: {e}")
+        raise HTTPException(status_code=500, detail=f"이미지 업로드 실패: {str(e)}")
+
+
+@app.post("/api/upload/base64")
+async def upload_image_base64(data: dict):
+    """
+    Base64 이미지 업로드 (Supabase Storage)
+    
+    - Drag & Drop에서 FileReader로 읽은 Base64 데이터 처리
+    - data.image: Base64 인코딩된 이미지 데이터
+    - data.filename: 파일명 (선택)
+    - data.content_type: MIME 타입 (선택)
+    """
+    
+    if not supabase:
+        raise HTTPException(status_code=503, detail="Supabase Storage가 설정되지 않았습니다.")
+    
+    image_data = data.get("image")
+    if not image_data:
+        raise HTTPException(status_code=400, detail="이미지 데이터가 없습니다.")
+    
+    # Base64 데이터 파싱 (data:image/png;base64,xxxxx 형식 처리)
+    if "," in image_data:
+        header, encoded = image_data.split(",", 1)
+        content_type = header.split(":")[1].split(";")[0] if ":" in header else "image/jpeg"
+    else:
+        encoded = image_data
+        content_type = data.get("content_type", "image/jpeg")
+    
+    # 허용된 타입 확인
+    allowed_types = ["image/jpeg", "image/png", "image/webp", "image/gif"]
+    if content_type not in allowed_types:
+        raise HTTPException(
+            status_code=400, 
+            detail=f"허용되지 않는 파일 형식입니다. 허용: {', '.join(allowed_types)}"
+        )
+    
+    # Base64 디코딩
+    try:
+        content = base64.b64decode(encoded)
+    except Exception as e:
+        raise HTTPException(status_code=400, detail="잘못된 Base64 인코딩입니다.")
+    
+    # 파일 크기 제한 (10MB)
+    max_size = 10 * 1024 * 1024
+    if len(content) > max_size:
+        raise HTTPException(status_code=400, detail="파일 크기는 10MB를 초과할 수 없습니다.")
+    
+    # 파일명 생성
+    ext_map = {"image/jpeg": "jpg", "image/png": "png", "image/webp": "webp", "image/gif": "gif"}
+    ext = ext_map.get(content_type, "jpg")
+    unique_filename = f"{uuid.uuid4()}.{ext}"
+    storage_path = f"uploads/{unique_filename}"
+    
+    try:
+        bucket_name = "source-images"
+        
+        try:
+            result = supabase.storage.from_(bucket_name).upload(
+                path=storage_path,
+                file=content,
+                file_options={"content-type": content_type}
+            )
+        except Exception as e:
+            if "not found" in str(e).lower():
+                supabase.storage.create_bucket(bucket_name, options={"public": True})
+                result = supabase.storage.from_(bucket_name).upload(
+                    path=storage_path,
+                    file=content,
+                    file_options={"content-type": content_type}
+                )
+            else:
+                raise
+        
+        supabase_url = os.getenv("SUPABASE_URL")
+        public_url = f"{supabase_url}/storage/v1/object/public/{bucket_name}/{storage_path}"
+        
+        print(f"✅ [Upload] Base64 이미지 업로드 성공: {public_url}")
+        
+        return {
+            "success": True,
+            "message": "이미지가 업로드되었습니다.",
+            "url": public_url,
+            "filename": unique_filename,
+            "size": len(content),
+            "content_type": content_type
+        }
+        
+    except Exception as e:
+        print(f"❌ [Upload] Base64 업로드 실패: {e}")
+        raise HTTPException(status_code=500, detail=f"이미지 업로드 실패: {str(e)}")
 
 
 # ============================================
@@ -462,6 +650,21 @@ async def generate_video(request: VideoGenerateRequest, background_tasks: Backgr
     
     aspect_ratio = ratio_map.get(request.aspect_ratio, AspectRatio.PORTRAIT)
     
+    # 소스 이미지 URL 처리 (source_image_url 우선, image_url 폴백)
+    source_image = request.source_image_url or request.image_url
+    
+    # Image-to-Video 모드 감지
+    is_image_to_video = bool(source_image)
+    
+    if is_image_to_video:
+        print(f"📸 [IMAGE-TO-VIDEO] 소스 이미지 감지됨")
+        print(f"   이미지 URL: {source_image[:80]}...")
+        
+        # Image-to-Video 시 Veo 추천 (물리적 움직임에 강함)
+        if video_model not in [VideoModel.VEO, VideoModel.KLING]:
+            print(f"⚠️ [I2V] {video_model.value}는 I2V 미지원 → Veo로 변경")
+            video_model = VideoModel.VEO
+    
     # VideoRequest 생성
     video_request = VideoRequest(
         project_id=request.project_id,
@@ -470,10 +673,12 @@ async def generate_video(request: VideoGenerateRequest, background_tasks: Backgr
         aspect_ratio=aspect_ratio,
         duration=request.duration,
         style_preset=request.style_preset,
-        image_url=request.image_url,
+        image_url=source_image,  # 소스 이미지 전달
     )
     
+    mode_str = "IMAGE-TO-VIDEO" if is_image_to_video else "TEXT-TO-VIDEO"
     print(f"🎬 [VIDEO GENERATE] 프로젝트: {request.project_id}")
+    print(f"   모드: {mode_str}")
     print(f"   모델: {video_model.value}, 비율: {request.aspect_ratio}")
     print(f"   프롬프트: {optimized_prompt[:100]}...")
     

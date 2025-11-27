@@ -359,9 +359,16 @@ class GoAPIClient:
         }
     
     def _build_request_body(self, request: VideoRequest) -> Dict[str, Any]:
-        """GoAPI 요청 본문 생성 - 모델별 형식 지원"""
+        """
+        GoAPI 요청 본문 생성 - 모델별 형식 지원
+        
+        Smart Switching Logic:
+        - 이미지가 있으면 → Image-to-Video 모드
+        - 이미지가 없으면 → Text-to-Video 모드
+        """
         
         config = self.MODEL_CONFIG.get(request.model, self.MODEL_CONFIG[VideoModel.KLING])
+        is_image_to_video = bool(request.image_url)
         
         # 프롬프트 최적화
         preset = STYLE_PRESETS.get(request.style_preset, STYLE_PRESETS["warm_film"])
@@ -376,35 +383,72 @@ class GoAPIClient:
             }
         }
         
-        # Veo3.1 - veo3.1-video (기본 text-to-video) 또는 image_to_video (이미지 제공 시)
+        print(f"{'='*60}")
+        print(f"🎬 [BUILD REQUEST] 모드: {'IMAGE-TO-VIDEO' if is_image_to_video else 'TEXT-TO-VIDEO'}")
+        print(f"   모델: {request.model.value}")
+        
+        # ============================================
+        # Veo3.1 Smart Switching
+        # ============================================
         if request.model == VideoModel.VEO:
-            if request.image_url:
-                # 이미지 있으면 image_to_video 사용
-                print("📸 [Veo3.1] 이미지 제공됨 → image_to_video 모드")
+            if is_image_to_video:
+                # Image-to-Video: task_type = "image_to_video"
+                print("📸 [Veo3.1] Image-to-Video 모드 활성화")
                 i2v_config = self.IMAGE_TO_VIDEO_CONFIG.get(VideoModel.VEO, config)
                 body["model"] = i2v_config["model"]
                 body["task_type"] = i2v_config["task_type"]
                 body["input"]["image_url"] = request.image_url
+                body["input"]["aspect_ratio"] = request.aspect_ratio.value
+                body["input"]["duration"] = f"{request.duration}s"
             else:
-                # 이미지 없으면 veo3.1-video (text-to-video) 사용
-                print("✏️ [Veo3.1] 텍스트만 → veo3.1-video 모드 (text-to-video)")
+                # Text-to-Video: task_type = "veo3.1-video"
+                print("✏️ [Veo3.1] Text-to-Video 모드 활성화 (veo3.1-video)")
+                # veo3.1-video는 aspect_ratio, duration, resolution 파라미터 지원
+                body["input"]["aspect_ratio"] = request.aspect_ratio.value
+                body["input"]["duration"] = f"{request.duration}s"
+                body["input"]["resolution"] = "720p"
         
-        # Sora2 - sora2-video 형식
-        elif request.model == VideoModel.SORA:
-            # Sora2는 text-to-video 지원
-            pass
-        
-        # 일반 모델 (Kling, Hailuo, Luma)
-        else:
+        # ============================================
+        # Kling Smart Switching
+        # ============================================
+        elif request.model == VideoModel.KLING:
+            if is_image_to_video:
+                # Kling Image-to-Video
+                print("📸 [Kling] Image-to-Video 모드 활성화")
+                body["input"]["image_url"] = request.image_url
+            else:
+                print("✏️ [Kling] Text-to-Video 모드 활성화")
+            
+            # Kling 공통 파라미터
             body["input"]["aspect_ratio"] = request.aspect_ratio.value
             body["input"]["duration"] = request.duration
         
+        # ============================================
+        # Sora2 (Text-to-Video only)
+        # ============================================
+        elif request.model == VideoModel.SORA:
+            print("🎬 [Sora2] Text-to-Video 모드 (sora2-video)")
+            # Sora2는 현재 text-to-video만 지원
+            if is_image_to_video:
+                print("⚠️ [Sora2] Image-to-Video 미지원 - 이미지 무시")
+        
+        # ============================================
+        # 기타 모델 (Hailuo, Luma)
+        # ============================================
+        else:
+            body["input"]["aspect_ratio"] = request.aspect_ratio.value
+            body["input"]["duration"] = request.duration
+            
+            if is_image_to_video:
+                body["input"]["image_url"] = request.image_url
+        
+        # Negative prompt (공통)
         if request.negative_prompt:
             body["input"]["negative_prompt"] = request.negative_prompt
         
-        # 이미지 URL 추가 (Veo 외 모델)
-        if request.image_url and request.model != VideoModel.VEO:
-            body["input"]["image_url"] = request.image_url
+        print(f"   task_type: {body['task_type']}")
+        print(f"   image_url: {'✅' if is_image_to_video else '❌'}")
+        print(f"{'='*60}")
         
         return body
     

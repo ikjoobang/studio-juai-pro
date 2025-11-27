@@ -61,6 +61,7 @@ export interface VideoProject {
   updatedAt: Date;
   preset?: string;
   industry?: string;
+  sourceImageUrl?: string; // Image-to-Video용 소스 이미지 URL
 }
 
 export interface TimelineClip {

@@ -74,6 +74,7 @@ interface Project {
   model: string;
   status: string;
   videoUrl?: string;
+  sourceImageUrl?: string; // Image-to-Video용 소스 이미지 URL
 }
 
 interface ChatMessage {
@@ -311,6 +312,14 @@ export default function DashboardPage() {
     const projectId = currentProject?.id || `project_${Date.now()}`;
 
     try {
+      // Image-to-Video 모드 감지
+      const sourceImageUrl = currentProject?.sourceImageUrl;
+      const isImageToVideo = Boolean(sourceImageUrl);
+      
+      if (isImageToVideo) {
+        console.log("📸 [Image-to-Video] 소스 이미지 감지됨:", sourceImageUrl);
+      }
+      
       const response = await fetch(`${API_BASE_URL}/api/video/generate`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -322,6 +331,7 @@ export default function DashboardPage() {
           duration: 5,
           style_preset: selectedPreset,
           use_director: selectedModel === "auto",
+          source_image_url: sourceImageUrl || null, // Image-to-Video용
         }),
       });
 
