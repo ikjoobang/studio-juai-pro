@@ -185,7 +185,7 @@ class KlingOfficialClient:
         if self.access_key and self.secret_key:
             print(f"✅ [Kling Official] API 키 설정됨: {self.access_key[:8]}...")
         else:
-            print("⚠️ [Kling Official] API 키 없음 - GoAPI 폴백 사용")
+            print("❌ [Kling Official] API 키 없음 - Kling 사용 불가")
     
     def _generate_jwt_token(self) -> str:
         """
@@ -997,11 +997,13 @@ class FactoryEngine:
     Hybrid Factory Engine - 통합 인터페이스
     
     라우팅 로직:
-    1. model == 'kling' → Kling Official API (JWT) 우선, 실패 시 GoAPI 폴백
+    1. model == 'kling' → Kling Official API (JWT) **전용** (GoAPI 폴백 없음!)
     2. model == 'veo', 'sora', 'midjourney' → GoAPI
     3. model == 'suno' → GoAPI Suno
     4. Avatar → HeyGen
     5. Edit → Creatomate
+    
+    ⚠️ 주의: Kling은 크레딧이 충분하므로 무조건 Official API만 사용!
     """
     
     def __init__(self):
@@ -1033,27 +1035,25 @@ class FactoryEngine:
         print(f"   Image: {'있음' if request.image_url else '없음'}")
         print(f"{'='*60}")
         
-        # Kling: Official API 우선
+        # Kling: Official API **전용** (GoAPI 폴백 없음!)
         if request.model == VideoModel.KLING:
             if self.kling_official.is_available:
-                print("🎯 [ROUTING] Kling Official API 사용")
+                print("🎯 [ROUTING] Kling Official API 전용 사용 (크레딧 충분!)")
                 result = await self.kling_official.generate_video(request)
                 
                 if result.success:
                     result.model = "kling_official"
                     return result
-                    
-                print("⚠️ [ROUTING] Kling Official 실패, GoAPI 폴백")
+                else:
+                    # Official 실패해도 GoAPI 폴백 안 함 - 오류 메시지 그대로 반환
+                    print(f"❌ [ROUTING] Kling Official 실패: {result.message}")
+                    return result
             
-            # GoAPI 폴백
-            if self.goapi.is_available:
-                print("🎯 [ROUTING] GoAPI Kling 폴백")
-                return await self.goapi.generate_video(request)
-            
+            # Official API 키 없으면 바로 에러 (GoAPI 폴백 안 함!)
             return VideoResponse(
                 success=False,
                 status="error",
-                message="Kling API 사용 불가 (Official + GoAPI 모두 실패)"
+                message="Kling Official API 키가 설정되지 않았습니다. (GoAPI 폴백 비활성화)"
             )
         
         # Veo, Sora, Midjourney, etc: GoAPI
@@ -1113,12 +1113,12 @@ class FactoryEngine:
         models = [
             {
                 "id": "kling",
-                "name": "Kling (Official)",
+                "name": "Kling (Official Only)",
                 "type": "video",
-                "available": self.kling_official.is_available or self.goapi.is_available,
-                "source": "kling_official" if self.kling_official.is_available else "goapi",
+                "available": self.kling_official.is_available,  # Official 전용!
+                "source": "kling_official",
                 "features": ["text2video", "image2video"],
-                "description": "고품질 영상 생성, 이미지-투-비디오 지원"
+                "description": "🎯 Official API 전용 - 크레딧 충분, 고품질 I2V 지원"
             },
             {
                 "id": "veo",
