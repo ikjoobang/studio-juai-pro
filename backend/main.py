@@ -30,6 +30,7 @@ from factory_engine import (
     FactoryEngine, GoAPIClient, CreatomateClient, HeyGenClient,
     VideoRequest, VideoResponse, VideoModel, AspectRatio,
     AvatarRequest, EditRequest, MusicRequest, MusicResponse, STYLE_PRESETS,
+    ImageRequest, ImageResponse, ImageModel, AudioModel,
     get_factory
 )
 
@@ -238,6 +239,28 @@ class EditVideoRequest(BaseModel):
     subheadline: Optional[str] = ""
     brand_color: str = "#03C75A"
     aspect_ratio: str = "9:16"
+
+
+class ImageGenerateRequest(BaseModel):
+    """이미지 생성 요청"""
+    project_id: str
+    prompt: str
+    model: str = "flux"  # flux, midjourney, dalle
+    aspect_ratio: str = "9:16"
+    style: str = "realistic"
+    negative_prompt: Optional[str] = None
+
+
+class ImageStatusResponse(BaseModel):
+    """이미지 생성 응답"""
+    success: bool
+    project_id: str
+    task_id: Optional[str] = None
+    status: str
+    progress: int = 0
+    message: str
+    image_url: Optional[str] = None
+    model: str = ""
     template_id: Optional[str] = None
 
 
@@ -816,6 +839,131 @@ async def get_video_progress(project_id: str):
 
 
 # ============================================
+# Image Generation API
+# ============================================
+
+@app.post("/api/image/generate", response_model=ImageStatusResponse)
+async def generate_image(request: ImageGenerateRequest, background_tasks: BackgroundTasks):
+    """
+    이미지 생성 API (Flux.1 / Midjourney / DALL-E via GoAPI)
+    
+    생성된 이미지는 타임라인의 Overlay 트랙에 사용 가능
+    """
+    
+    # 모델 변환
+    model_map = {
+        "flux": ImageModel.FLUX,
+        "midjourney": ImageModel.MIDJOURNEY,
+        "dalle": ImageModel.DALLE,
+    }
+    
+    image_model = model_map.get(request.model.lower(), ImageModel.FLUX)
+    
+    # 비율 변환
+    ratio_map = {
+        "16:9": AspectRatio.LANDSCAPE,
+        "9:16": AspectRatio.PORTRAIT,
+        "1:1": AspectRatio.SQUARE,
+    }
+    
+    aspect_ratio = ratio_map.get(request.aspect_ratio, AspectRatio.PORTRAIT)
+    
+    # ImageRequest 생성
+    image_request = ImageRequest(
+        prompt=request.prompt,
+        model=image_model,
+        aspect_ratio=aspect_ratio,
+        style=request.style,
+        negative_prompt=request.negative_prompt
+    )
+    
+    print(f"🖼️ [IMAGE GENERATE] 프로젝트: {request.project_id}")
+    print(f"   모델: {image_model.value}, 비율: {request.aspect_ratio}")
+    print(f"   프롬프트: {request.prompt[:100]}...")
+    
+    # Factory Engine으로 생성
+    result = await factory.generate_image(image_request)
+    
+    if not result.success:
+        raise HTTPException(status_code=500, detail=f"이미지 생성 실패: {result.message}")
+    
+    # Task 저장
+    task_store[f"image_{request.project_id}"] = {
+        "task_id": result.task_id,
+        "model": image_model.value,
+        "status": "processing",
+        "progress": 10,
+        "image_url": None,
+        "created_at": datetime.utcnow().isoformat()
+    }
+    
+    # 백그라운드 폴링
+    background_tasks.add_task(poll_image_status, request.project_id, result.task_id)
+    
+    return ImageStatusResponse(
+        success=True,
+        project_id=request.project_id,
+        task_id=result.task_id,
+        status="processing",
+        progress=10,
+        message=f"{image_model.value.upper()} 이미지 생성이 시작되었습니다.",
+        model=image_model.value
+    )
+
+
+async def poll_image_status(project_id: str, task_id: str):
+    """이미지 생성 상태 폴링 - 최대 3분"""
+    max_attempts = 60
+    poll_interval = 3
+    
+    for attempt in range(max_attempts):
+        await asyncio.sleep(poll_interval)
+        
+        result = await factory.goapi.check_image_status(task_id)
+        
+        store_key = f"image_{project_id}"
+        if store_key in task_store:
+            task_store[store_key]["status"] = result.status
+            task_store[store_key]["image_url"] = result.image_url
+            
+            elapsed = (attempt + 1) * poll_interval
+            
+            if result.status == "completed" and result.image_url:
+                task_store[store_key]["progress"] = 100
+                task_store[store_key]["message"] = "이미지 생성 완료!"
+                print(f"✅ 이미지 생성 완료: {project_id}")
+                break
+            elif result.status == "failed":
+                task_store[store_key]["progress"] = 0
+                task_store[store_key]["message"] = f"실패: {result.message}"
+                break
+            else:
+                task_store[store_key]["progress"] = min(90, 10 + attempt * 3)
+
+
+@app.get("/api/image/progress/{project_id}", response_model=ImageStatusResponse)
+async def get_image_progress(project_id: str):
+    """이미지 생성 진행률 조회"""
+    
+    store_key = f"image_{project_id}"
+    task_data = task_store.get(store_key)
+    
+    if not task_data:
+        raise HTTPException(status_code=404, detail="이미지 작업을 찾을 수 없습니다.")
+    
+    return ImageStatusResponse(
+        success=True,
+        project_id=project_id,
+        task_id=task_data.get("task_id"),
+        status=task_data.get("status", "processing"),
+        progress=task_data.get("progress", 0),
+        message=task_data.get("message", "처리 중..."),
+        image_url=task_data.get("image_url"),
+        model=task_data.get("model", "")
+    )
+
+
+# ============================================
 # Factory Status (Unified Task Status)
 # ============================================
 
@@ -823,7 +971,7 @@ class FactoryStatusResponse(BaseModel):
     """통합 작업 상태 응답"""
     success: bool
     task_id: str
-    task_type: str  # video, music, avatar, edit
+    task_type: str  # video, music, avatar, edit, image
     status: str  # pending, processing, completed, failed
     progress: int  # 0-100
     message: str

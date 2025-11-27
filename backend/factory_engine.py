@@ -39,6 +39,14 @@ class VideoModel(Enum):
 class AudioModel(Enum):
     """지원하는 음악 생성 모델"""
     SUNO = "suno"             # Suno (via GoAPI)
+    UDIO = "udio"             # Udio (via GoAPI) - Fallback
+
+
+class ImageModel(Enum):
+    """지원하는 이미지 생성 모델"""
+    FLUX = "flux"             # Flux.1 (via GoAPI)
+    MIDJOURNEY = "midjourney" # Midjourney (via GoAPI)
+    DALLE = "dalle"           # DALL-E 3 (via GoAPI)
 
 
 class AspectRatio(Enum):
@@ -106,6 +114,28 @@ class MusicResponse:
     audio_url: Optional[str] = None
     status: str = "pending"
     message: str = ""
+    model: str = "suno"  # 어떤 모델로 생성했는지
+
+
+@dataclass
+class ImageRequest:
+    """이미지 생성 요청"""
+    prompt: str
+    model: ImageModel = ImageModel.FLUX
+    aspect_ratio: AspectRatio = AspectRatio.PORTRAIT
+    style: str = "realistic"
+    negative_prompt: Optional[str] = None
+
+
+@dataclass
+class ImageResponse:
+    """이미지 생성 응답"""
+    success: bool
+    task_id: Optional[str] = None
+    image_url: Optional[str] = None
+    status: str = "pending"
+    message: str = ""
+    model: str = "flux"
 
 
 @dataclass
@@ -424,10 +454,17 @@ class GoAPIClient:
         VideoModel.KLING: {"task_type": "video_generation", "model": "kling"},  # GoAPI fallback
     }
     
-    # Suno 설정
-    SUNO_CONFIG = {
-        "task_type": "suno_music",
-        "model": "suno"
+    # 음악 모델 설정
+    MUSIC_CONFIG = {
+        AudioModel.SUNO: {"task_type": "generate_music", "model": "suno"},
+        AudioModel.UDIO: {"task_type": "generate_music", "model": "udio"},
+    }
+    
+    # 이미지 모델 설정
+    IMAGE_CONFIG = {
+        ImageModel.FLUX: {"task_type": "flux-1.1-pro", "model": "flux"},
+        ImageModel.MIDJOURNEY: {"task_type": "imagine", "model": "midjourney"},
+        ImageModel.DALLE: {"task_type": "generations", "model": "dall-e-3"},
     }
     
     def __init__(self):
@@ -580,20 +617,19 @@ class GoAPIClient:
                 model=request.model.value
             )
     
-    async def generate_music(self, request: MusicRequest) -> MusicResponse:
-        """GoAPI Suno로 음악 생성"""
+    async def _generate_music_with_model(
+        self, 
+        request: MusicRequest, 
+        audio_model: AudioModel
+    ) -> MusicResponse:
+        """특정 모델로 음악 생성 (내부 함수)"""
         
-        if not self.api_key:
-            return MusicResponse(
-                success=False,
-                status="error",
-                message="GoAPI 키가 설정되지 않았습니다."
-            )
+        config = self.MUSIC_CONFIG.get(audio_model, self.MUSIC_CONFIG[AudioModel.SUNO])
         
         url = f"{self.BASE_URL}/task"
         body = {
-            "model": "suno",
-            "task_type": "generate_music",
+            "model": config["model"],
+            "task_type": config["task_type"],
             "input": {
                 "prompt": request.prompt,
                 "style": request.style,
@@ -602,7 +638,7 @@ class GoAPIClient:
             }
         }
         
-        print(f"🎵 [GoAPI Suno] 음악 생성 요청")
+        print(f"🎵 [GoAPI {audio_model.value.upper()}] 음악 생성 요청")
         print(f"   프롬프트: {request.prompt[:80]}...")
         print(f"   스타일: {request.style}")
         
@@ -615,26 +651,216 @@ class GoAPIClient:
                     
                     if data.get("code") == 200:
                         task_id = data.get("data", {}).get("task_id")
-                        print(f"✅ [Suno] 작업 생성: {task_id}")
+                        print(f"✅ [{audio_model.value.upper()}] 작업 생성: {task_id}")
                         
                         return MusicResponse(
                             success=True,
                             task_id=task_id,
                             status="processing",
-                            message="음악 생성이 시작되었습니다."
+                            message=f"{audio_model.value.upper()} 음악 생성이 시작되었습니다.",
+                            model=audio_model.value
                         )
-                        
+                
+                # 오류 반환 (Fallback 가능)
                 return MusicResponse(
                     success=False,
                     status="error",
-                    message=f"Suno API 오류: {response.status_code}"
+                    message=f"{audio_model.value.upper()} API 오류: {response.status_code}",
+                    model=audio_model.value
                 )
                 
         except Exception as e:
             return MusicResponse(
                 success=False,
                 status="error",
-                message=f"Suno 연결 오류: {str(e)}"
+                message=f"{audio_model.value.upper()} 연결 오류: {str(e)}",
+                model=audio_model.value
+            )
+    
+    async def generate_music(self, request: MusicRequest, preferred_model: AudioModel = AudioModel.SUNO) -> MusicResponse:
+        """
+        GoAPI 음악 생성 (Fallback 시스템)
+        
+        우선순위:
+        1. preferred_model (기본: Suno)
+        2. Fallback: Udio (Suno 실패시)
+        """
+        
+        if not self.api_key:
+            return MusicResponse(
+                success=False,
+                status="error",
+                message="GoAPI 키가 설정되지 않았습니다."
+            )
+        
+        # 1차: 선호 모델 시도
+        print(f"{'='*60}")
+        print(f"🎵 [MUSIC] 1차 시도: {preferred_model.value.upper()}")
+        print(f"{'='*60}")
+        
+        result = await self._generate_music_with_model(request, preferred_model)
+        
+        if result.success:
+            return result
+        
+        # 2차: Fallback 시도 (Suno 실패 → Udio)
+        fallback_model = AudioModel.UDIO if preferred_model == AudioModel.SUNO else AudioModel.SUNO
+        
+        print(f"{'='*60}")
+        print(f"⚠️ [{preferred_model.value.upper()}] 실패! Fallback: {fallback_model.value.upper()}")
+        print(f"{'='*60}")
+        
+        fallback_result = await self._generate_music_with_model(request, fallback_model)
+        
+        if fallback_result.success:
+            fallback_result.message = f"[Fallback] {fallback_result.message}"
+            return fallback_result
+        
+        # 모두 실패
+        return MusicResponse(
+            success=False,
+            status="error",
+            message=f"음악 생성 실패: Suno, Udio 모두 사용 불가. 원인: {result.message}"
+        )
+    
+    async def generate_image(self, request: ImageRequest) -> ImageResponse:
+        """GoAPI로 이미지 생성 (Flux.1, Midjourney, DALL-E)"""
+        
+        if not self.api_key:
+            return ImageResponse(
+                success=False,
+                status="error",
+                message="GoAPI 키가 설정되지 않았습니다."
+            )
+        
+        config = self.IMAGE_CONFIG.get(request.model, self.IMAGE_CONFIG[ImageModel.FLUX])
+        
+        url = f"{self.BASE_URL}/task"
+        body = {
+            "model": config["model"],
+            "task_type": config["task_type"],
+            "input": {
+                "prompt": request.prompt,
+                "aspect_ratio": request.aspect_ratio.value
+            }
+        }
+        
+        # 모델별 파라미터
+        if request.model == ImageModel.FLUX:
+            body["input"]["output_format"] = "png"
+            body["input"]["safety_tolerance"] = 2
+            if request.negative_prompt:
+                body["input"]["negative_prompt"] = request.negative_prompt
+        elif request.model == ImageModel.MIDJOURNEY:
+            body["task_type"] = "imagine"
+            body["input"]["process_mode"] = "fast"
+        elif request.model == ImageModel.DALLE:
+            body["input"]["size"] = "1024x1792" if request.aspect_ratio == AspectRatio.PORTRAIT else "1792x1024"
+            body["input"]["quality"] = "hd"
+        
+        print(f"🖼️ [GoAPI {request.model.value.upper()}] 이미지 생성 요청")
+        print(f"   프롬프트: {request.prompt[:80]}...")
+        
+        try:
+            async with httpx.AsyncClient(timeout=60.0) as client:
+                response = await client.post(url, headers=self._get_headers(), json=body)
+                
+                if response.status_code == 200:
+                    data = response.json()
+                    
+                    if data.get("code") == 200:
+                        task_id = data.get("data", {}).get("task_id")
+                        print(f"✅ [{request.model.value.upper()}] 이미지 작업 생성: {task_id}")
+                        
+                        return ImageResponse(
+                            success=True,
+                            task_id=task_id,
+                            status="processing",
+                            message=f"{request.model.value.upper()} 이미지 생성이 시작되었습니다.",
+                            model=request.model.value
+                        )
+                
+                return ImageResponse(
+                    success=False,
+                    status="error",
+                    message=f"이미지 API 오류: {response.status_code}",
+                    model=request.model.value
+                )
+                
+        except Exception as e:
+            return ImageResponse(
+                success=False,
+                status="error",
+                message=f"이미지 연결 오류: {str(e)}",
+                model=request.model.value
+            )
+    
+    async def check_image_status(self, task_id: str) -> ImageResponse:
+        """이미지 생성 상태 확인"""
+        
+        if not self.api_key:
+            return ImageResponse(success=False, status="error", message="API 키 없음")
+        
+        url = f"{self.BASE_URL}/task/{task_id}"
+        
+        try:
+            async with httpx.AsyncClient(timeout=30.0) as client:
+                response = await client.get(url, headers=self._get_headers())
+                
+                if response.status_code == 200:
+                    data = response.json()
+                    
+                    if data.get("code") == 200:
+                        task_data = data.get("data", {})
+                        status = task_data.get("status", "processing")
+                        output = task_data.get("output", {})
+                        
+                        image_url = None
+                        
+                        if status in ["completed", "succeed"]:
+                            # Flux/Midjourney 이미지 URL 추출
+                            images = output.get("images", [])
+                            if images:
+                                image_url = images[0].get("url") or images[0]
+                            else:
+                                image_url = output.get("image_url") or output.get("url")
+                            
+                            print(f"✅ [Image] 완료! URL: {image_url}")
+                            
+                            return ImageResponse(
+                                success=True,
+                                task_id=task_id,
+                                image_url=image_url,
+                                status="completed",
+                                message="이미지 생성 완료"
+                            )
+                        
+                        elif status == "failed":
+                            return ImageResponse(
+                                success=False,
+                                task_id=task_id,
+                                status="failed",
+                                message=f"이미지 생성 실패: {task_data.get('error', {})}"
+                            )
+                        
+                        return ImageResponse(
+                            success=True,
+                            task_id=task_id,
+                            status=status,
+                            message="이미지 생성 중..."
+                        )
+                
+                return ImageResponse(
+                    success=False,
+                    status="error",
+                    message="상태 조회 실패"
+                )
+                
+        except Exception as e:
+            return ImageResponse(
+                success=False,
+                status="error",
+                message=f"상태 조회 오류: {str(e)}"
             )
     
     async def check_status(self, task_id: str, model: VideoModel) -> VideoResponse:
@@ -1187,8 +1413,10 @@ class FactoryEngine:
             message="GoAPI 키가 설정되지 않았습니다."
         )
     
-    async def generate_music(self, request: MusicRequest) -> MusicResponse:
-        """음악 생성 (Suno via GoAPI)"""
+    async def generate_music(self, request: MusicRequest, preferred_model: AudioModel = AudioModel.SUNO) -> MusicResponse:
+        """
+        음악 생성 (Fallback 시스템: Suno → Udio)
+        """
         
         if not self.goapi.is_available:
             return MusicResponse(
@@ -1197,8 +1425,75 @@ class FactoryEngine:
                 message="GoAPI 키가 설정되지 않았습니다."
             )
         
-        print("🎯 [ROUTING] GoAPI Suno")
-        return await self.goapi.generate_music(request)
+        print(f"🎯 [ROUTING] GoAPI Music (1차: {preferred_model.value}, Fallback 활성화)")
+        return await self.goapi.generate_music(request, preferred_model)
+    
+    async def generate_image(self, request: ImageRequest) -> ImageResponse:
+        """이미지 생성 (Flux.1 / Midjourney / DALL-E via GoAPI)"""
+        
+        if not self.goapi.is_available:
+            return ImageResponse(
+                success=False,
+                status="error",
+                message="GoAPI 키가 설정되지 않았습니다."
+            )
+        
+        print(f"🎯 [ROUTING] GoAPI Image ({request.model.value})")
+        return await self.goapi.generate_image(request)
+    
+    async def generate_video_with_postprocess(
+        self, 
+        request: VideoRequest, 
+        headline: str = "",
+        subheadline: str = ""
+    ) -> VideoResponse:
+        """
+        영상 생성 + Creatomate 자동 후처리 파이프라인
+        
+        1. 영상 생성 (SORA/Veo/Kling 등)
+        2. Creatomate로 자막/효과 적용
+        3. 최종본 반환
+        """
+        
+        # 1단계: 영상 생성
+        print(f"\n{'='*60}")
+        print(f"🎬 [PIPELINE] 영상 생성 + 후처리 파이프라인 시작")
+        print(f"   Model: {request.model.value}")
+        print(f"   Headline: {headline or '(없음)'}")
+        print(f"{'='*60}")
+        
+        video_result = await self.generate_video(request)
+        
+        if not video_result.success:
+            return video_result
+        
+        # 2단계: Creatomate 후처리 (headline이 있는 경우에만)
+        if headline and self.creatomate.is_available and video_result.video_url:
+            print(f"✨ [PIPELINE] Creatomate 후처리 시작...")
+            
+            edit_result = await self.creatomate.auto_edit(
+                project_id=request.project_id,
+                video_url=video_result.video_url,
+                headline=headline,
+                subheadline=subheadline,
+                aspect_ratio=request.aspect_ratio
+            )
+            
+            if edit_result.success:
+                print(f"✅ [PIPELINE] 후처리 완료!")
+                return VideoResponse(
+                    success=True,
+                    task_id=edit_result.task_id,
+                    video_url=edit_result.video_url,
+                    status=edit_result.status,
+                    message=f"영상 생성 + 자막 적용 완료 ({request.model.value} + Creatomate)",
+                    model=f"{request.model.value}+creatomate",
+                    progress=edit_result.progress
+                )
+            else:
+                print(f"⚠️ [PIPELINE] 후처리 실패, 원본 반환")
+        
+        return video_result
     
     async def check_video_status(self, task_id: str, model: VideoModel, source: str = "auto") -> VideoResponse:
         """영상 상태 확인"""

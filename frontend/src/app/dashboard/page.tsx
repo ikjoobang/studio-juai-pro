@@ -140,16 +140,31 @@ const ASPECT_RATIOS = [
   { id: "4:5", name: "4:5 (피드)", width: 1080, height: 1350 },
 ];
 
-// Hybrid Engine - 모델 목록
+// Hybrid Engine - 모델 목록 (FULL UNLOCK)
 const AI_MODELS = [
+  // Video Models
   { id: "auto", name: "🧠 Auto (AI Director)", description: "AI가 최적 모델 자동 선택", type: "video" },
   { id: "kling", name: "🎬 Kling (Official)", description: "공식 API - I2V 지원", type: "video", badge: "Official" },
-  { id: "veo", name: "🌟 Veo 3.1 (Google)", description: "리얼리즘/물리 시뮬레이션", type: "video" },
-  { id: "sora", name: "🎥 Sora 2 (OpenAI)", description: "시네마틱/고품질", type: "video" },
-  { id: "midjourney", name: "🖼️ Midjourney", description: "고품질 이미지 생성", type: "image" },
+  { id: "veo", name: "🌟 Veo 3.1 (Google)", description: "리얼리즘/물리 시뮬레이션", type: "video", badge: "NEW" },
+  { id: "sora", name: "🎥 Sora 2 (OpenAI)", description: "시네마틱/고품질", type: "video", badge: "PRO" },
+  { id: "luma", name: "✨ Luma (Dream Machine)", description: "크리에이티브/아트 스타일", type: "video", badge: "NEW" },
+  { id: "hailuo", name: "🚀 Hailuo (MiniMax)", description: "초고속/효율적", type: "video", badge: "FAST" },
+  // Image Models
+  { id: "flux", name: "🎨 Flux.1 Pro", description: "최고 품질 이미지", type: "image", badge: "BEST" },
+  { id: "midjourney", name: "🖼️ Midjourney", description: "예술적 이미지", type: "image" },
+  { id: "dalle", name: "🌈 DALL-E 3", description: "OpenAI 이미지", type: "image" },
+  // Audio Models
   { id: "suno", name: "🎵 Suno (Music)", description: "AI 음악 생성", type: "audio" },
+  { id: "udio", name: "🎶 Udio (Music)", description: "AI 음악 생성 (백업)", type: "audio", badge: "BACKUP" },
+  // Avatar
   { id: "heygen", name: "🎭 HeyGen", description: "AI 아바타 영상", type: "avatar" },
 ];
+
+// 이미지 전용 모델 필터
+const IMAGE_MODELS = AI_MODELS.filter(m => m.type === "image");
+
+// 영상 전용 모델 필터
+const VIDEO_MODELS = AI_MODELS.filter(m => m.type === "video");
 
 // ============================================
 // Main Dashboard Component
@@ -197,6 +212,15 @@ export default function DashboardPage() {
   // Export State
   const [canExport, setCanExport] = useState(false);
   const [exportVideoUrl, setExportVideoUrl] = useState<string | null>(null);
+
+  // Image Generation State
+  const [imagePrompt, setImagePrompt] = useState("");
+  const [selectedImageModel, setSelectedImageModel] = useState("flux");
+  const [isImageGenerating, setIsImageGenerating] = useState(false);
+  const [generatedImages, setGeneratedImages] = useState<string[]>([]);
+
+  // Generation Mode (video/image)
+  const [generationMode, setGenerationMode] = useState<"video" | "image">("video");
 
   // Audio Player Ref (for BGM)
   const audioRef = useRef<HTMLAudioElement>(null);
@@ -618,6 +642,95 @@ export default function DashboardPage() {
   }, [exportVideoUrl]);
 
   // ============================================
+  // Image Generation
+  // ============================================
+
+  const generateImage = useCallback(async () => {
+    if (!imagePrompt.trim()) {
+      toast.error("이미지 프롬프트를 입력해주세요.");
+      return;
+    }
+
+    setIsImageGenerating(true);
+    setError(null);
+
+    const projectId = currentProject?.id || `img_${Date.now()}`;
+
+    toast.loading("🖼️ 이미지 생성 중...", { id: "image-gen" });
+
+    try {
+      // 1. 이미지 생성 요청
+      const response = await fetch(`${API_BASE_URL}/api/image/generate`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          project_id: projectId,
+          prompt: imagePrompt,
+          model: selectedImageModel,
+          aspect_ratio: selectedRatio,
+          style: "realistic",
+        }),
+      });
+
+      if (!response.ok) {
+        throw new Error(`API 오류: ${response.status}`);
+      }
+
+      const data = await response.json();
+      console.log("🖼️ [Image] 생성 시작:", data);
+
+      // 2. 폴링으로 완료 대기
+      let attempts = 0;
+      const maxAttempts = 60; // 3분
+      const pollInterval = 3000;
+
+      while (attempts < maxAttempts) {
+        const progressRes = await fetch(
+          `${API_BASE_URL}/api/image/progress/${projectId}`
+        );
+        const progressData = await progressRes.json();
+
+        if (progressData.status === "completed" && progressData.image_url) {
+          toast.success("🖼️ 이미지 생성 완료!", { id: "image-gen" });
+          
+          // 생성된 이미지 저장
+          setGeneratedImages((prev) => [...prev, progressData.image_url]);
+          
+          // 타임라인 Overlay 트랙에 추가
+          addClipToTimeline({
+            id: `img_${Date.now()}`,
+            name: `AI Image`,
+            type: "image",
+            url: progressData.image_url,
+            startTime: 0,
+            duration: 3,
+            trackIndex: 2, // Overlay 트랙
+          });
+
+          setIsImageGenerating(false);
+          setImagePrompt("");
+          return;
+        }
+
+        if (progressData.status === "failed") {
+          throw new Error(progressData.message || "이미지 생성 실패");
+        }
+
+        await new Promise((r) => setTimeout(r, pollInterval));
+        attempts++;
+      }
+
+      throw new Error("시간 초과");
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : "알 수 없는 오류";
+      toast.error(`❌ 이미지 생성 실패: ${msg}`, { id: "image-gen" });
+      setError(msg);
+    } finally {
+      setIsImageGenerating(false);
+    }
+  }, [imagePrompt, selectedImageModel, selectedRatio, currentProject]);
+
+  // ============================================
   // Timeline Functions
   // ============================================
 
@@ -909,10 +1022,31 @@ export default function DashboardPage() {
                 {/* Generation Controls */}
                 <ResizablePanel defaultSize={45} minSize={30}>
                   <div className="h-full bg-[#1a1a1a] p-4 overflow-y-auto">
-                    <h3 className="text-sm font-semibold text-gray-400 mb-4 flex items-center gap-2">
-                      <Wand2 className="w-4 h-4 text-[#03C75A]" />
-                      AI 영상 생성
-                    </h3>
+                    {/* Mode Tabs: Video / Image */}
+                    <div className="flex gap-2 mb-4">
+                      <button
+                        onClick={() => setGenerationMode("video")}
+                        className={`flex-1 py-2 px-3 rounded-lg text-sm font-medium transition-all flex items-center justify-center gap-2 ${
+                          generationMode === "video"
+                            ? "bg-[#03C75A] text-white"
+                            : "bg-[#0a0a0a] text-gray-400 hover:bg-[#252525]"
+                        }`}
+                      >
+                        <Film className="w-4 h-4" />
+                        영상 생성
+                      </button>
+                      <button
+                        onClick={() => setGenerationMode("image")}
+                        className={`flex-1 py-2 px-3 rounded-lg text-sm font-medium transition-all flex items-center justify-center gap-2 ${
+                          generationMode === "image"
+                            ? "bg-[#03C75A] text-white"
+                            : "bg-[#0a0a0a] text-gray-400 hover:bg-[#252525]"
+                        }`}
+                      >
+                        <ImageIcon className="w-4 h-4" />
+                        이미지 생성
+                      </button>
+                    </div>
 
                     {/* Error Display */}
                     {error && (
@@ -922,115 +1056,252 @@ export default function DashboardPage() {
                       </div>
                     )}
 
-                    {/* Prompt Input */}
-                    <div className="mb-4">
-                      <label className="text-xs text-gray-500 mb-1 block">
-                        프롬프트
-                      </label>
-                      <Textarea
-                        placeholder="만들고 싶은 영상을 자세히 설명해주세요..."
-                        value={prompt}
-                        onChange={(e) => setPrompt(e.target.value)}
-                        className="bg-[#0a0a0a] border-[#333] focus:border-[#03C75A] min-h-[100px]"
-                      />
-                    </div>
+                    {/* === VIDEO GENERATION MODE === */}
+                    {generationMode === "video" && (
+                      <>
+                        {/* Prompt Input */}
+                        <div className="mb-4">
+                          <label className="text-xs text-gray-500 mb-1 block">
+                            영상 프롬프트
+                          </label>
+                          <Textarea
+                            placeholder="만들고 싶은 영상을 자세히 설명해주세요..."
+                            value={prompt}
+                            onChange={(e) => setPrompt(e.target.value)}
+                            className="bg-[#0a0a0a] border-[#333] focus:border-[#03C75A] min-h-[100px]"
+                          />
+                        </div>
 
-                    {/* Model Selection */}
-                    <div className="mb-4">
-                      <label className="text-xs text-gray-500 mb-1 block">
-                        AI 모델
-                      </label>
-                      <Select
-                        value={selectedModel}
-                        onValueChange={setSelectedModel}
-                      >
-                        <SelectTrigger className="bg-[#0a0a0a] border-[#333]">
-                          <SelectValue />
-                        </SelectTrigger>
-                        <SelectContent className="bg-[#1a1a1a] border-[#333]">
-                          {AI_MODELS.map((model) => (
-                            <SelectItem key={model.id} value={model.id}>
-                              <span className="flex items-center gap-2">
-                                {model.name}
-                                <span className="text-xs text-gray-500">
-                                  ({model.description})
-                                </span>
-                              </span>
-                            </SelectItem>
-                          ))}
-                        </SelectContent>
-                      </Select>
-                    </div>
+                        {/* Model Selection - VIDEO ONLY */}
+                        <div className="mb-4">
+                          <label className="text-xs text-gray-500 mb-1 block">
+                            영상 모델
+                          </label>
+                          <Select
+                            value={selectedModel}
+                            onValueChange={setSelectedModel}
+                          >
+                            <SelectTrigger className="bg-[#0a0a0a] border-[#333]">
+                              <SelectValue />
+                            </SelectTrigger>
+                            <SelectContent className="bg-[#1a1a1a] border-[#333]">
+                              {VIDEO_MODELS.map((model) => (
+                                <SelectItem key={model.id} value={model.id}>
+                                  <span className="flex items-center gap-2">
+                                    {model.name}
+                                    {model.badge && (
+                                      <span className="text-[10px] px-1.5 py-0.5 bg-[#03C75A]/20 text-[#03C75A] rounded">
+                                        {model.badge}
+                                      </span>
+                                    )}
+                                    <span className="text-xs text-gray-500">
+                                      ({model.description})
+                                    </span>
+                                  </span>
+                                </SelectItem>
+                              ))}
+                            </SelectContent>
+                          </Select>
+                        </div>
 
-                    {/* Aspect Ratio & Preset */}
-                    <div className="grid grid-cols-2 gap-4 mb-4">
-                      <div>
-                        <label className="text-xs text-gray-500 mb-1 block">
-                          비율
-                        </label>
-                        <Select
-                          value={selectedRatio}
-                          onValueChange={setSelectedRatio}
+                        {/* Aspect Ratio & Preset */}
+                        <div className="grid grid-cols-2 gap-4 mb-4">
+                          <div>
+                            <label className="text-xs text-gray-500 mb-1 block">
+                              비율
+                            </label>
+                            <Select
+                              value={selectedRatio}
+                              onValueChange={setSelectedRatio}
+                            >
+                              <SelectTrigger className="bg-[#0a0a0a] border-[#333]">
+                                <SelectValue />
+                              </SelectTrigger>
+                              <SelectContent className="bg-[#1a1a1a] border-[#333]">
+                                {ASPECT_RATIOS.map((ratio) => (
+                                  <SelectItem key={ratio.id} value={ratio.id}>
+                                    {ratio.name}
+                                  </SelectItem>
+                                ))}
+                              </SelectContent>
+                            </Select>
+                          </div>
+
+                          <div>
+                            <label className="text-xs text-gray-500 mb-1 block">
+                              스타일
+                            </label>
+                            <Select
+                              value={selectedPreset}
+                              onValueChange={setSelectedPreset}
+                            >
+                              <SelectTrigger className="bg-[#0a0a0a] border-[#333]">
+                                <SelectValue />
+                              </SelectTrigger>
+                              <SelectContent className="bg-[#1a1a1a] border-[#333]">
+                                {STYLE_PRESETS.map((preset) => (
+                                  <SelectItem key={preset.id} value={preset.id}>
+                                    <span className="flex items-center gap-2">
+                                      <span
+                                        className="w-3 h-3 rounded-full"
+                                        style={{ backgroundColor: preset.color }}
+                                      />
+                                      {preset.name}
+                                    </span>
+                                  </SelectItem>
+                                ))}
+                              </SelectContent>
+                            </Select>
+                          </div>
+                        </div>
+
+                        {/* Generate Video Button */}
+                        <Button
+                          className="w-full bg-[#03C75A] hover:bg-[#02a84d] text-white font-semibold"
+                          onClick={generateVideo}
+                          disabled={generationStatus.isGenerating || !prompt.trim()}
                         >
-                          <SelectTrigger className="bg-[#0a0a0a] border-[#333]">
-                            <SelectValue />
-                          </SelectTrigger>
-                          <SelectContent className="bg-[#1a1a1a] border-[#333]">
-                            {ASPECT_RATIOS.map((ratio) => (
-                              <SelectItem key={ratio.id} value={ratio.id}>
-                                {ratio.name}
-                              </SelectItem>
-                            ))}
-                          </SelectContent>
-                        </Select>
-                      </div>
+                          {generationStatus.isGenerating ? (
+                            <>
+                              <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                              생성 중... ({generationStatus.progress}%)
+                            </>
+                          ) : (
+                            <>
+                              <Sparkles className="w-4 h-4 mr-2" />
+                              영상 생성
+                            </>
+                          )}
+                        </Button>
+                      </>
+                    )}
 
-                      <div>
-                        <label className="text-xs text-gray-500 mb-1 block">
-                          스타일
-                        </label>
-                        <Select
-                          value={selectedPreset}
-                          onValueChange={setSelectedPreset}
+                    {/* === IMAGE GENERATION MODE === */}
+                    {generationMode === "image" && (
+                      <>
+                        {/* Image Prompt Input */}
+                        <div className="mb-4">
+                          <label className="text-xs text-gray-500 mb-1 block">
+                            이미지 프롬프트
+                          </label>
+                          <Textarea
+                            placeholder="만들고 싶은 이미지를 자세히 설명해주세요..."
+                            value={imagePrompt}
+                            onChange={(e) => setImagePrompt(e.target.value)}
+                            className="bg-[#0a0a0a] border-[#333] focus:border-[#03C75A] min-h-[100px]"
+                          />
+                        </div>
+
+                        {/* Image Model Selection */}
+                        <div className="mb-4">
+                          <label className="text-xs text-gray-500 mb-1 block">
+                            이미지 모델
+                          </label>
+                          <Select
+                            value={selectedImageModel}
+                            onValueChange={setSelectedImageModel}
+                          >
+                            <SelectTrigger className="bg-[#0a0a0a] border-[#333]">
+                              <SelectValue />
+                            </SelectTrigger>
+                            <SelectContent className="bg-[#1a1a1a] border-[#333]">
+                              {IMAGE_MODELS.map((model) => (
+                                <SelectItem key={model.id} value={model.id}>
+                                  <span className="flex items-center gap-2">
+                                    {model.name}
+                                    {model.badge && (
+                                      <span className="text-[10px] px-1.5 py-0.5 bg-[#03C75A]/20 text-[#03C75A] rounded">
+                                        {model.badge}
+                                      </span>
+                                    )}
+                                    <span className="text-xs text-gray-500">
+                                      ({model.description})
+                                    </span>
+                                  </span>
+                                </SelectItem>
+                              ))}
+                            </SelectContent>
+                          </Select>
+                        </div>
+
+                        {/* Image Aspect Ratio */}
+                        <div className="mb-4">
+                          <label className="text-xs text-gray-500 mb-1 block">
+                            비율
+                          </label>
+                          <Select
+                            value={selectedRatio}
+                            onValueChange={setSelectedRatio}
+                          >
+                            <SelectTrigger className="bg-[#0a0a0a] border-[#333]">
+                              <SelectValue />
+                            </SelectTrigger>
+                            <SelectContent className="bg-[#1a1a1a] border-[#333]">
+                              {ASPECT_RATIOS.map((ratio) => (
+                                <SelectItem key={ratio.id} value={ratio.id}>
+                                  {ratio.name}
+                                </SelectItem>
+                              ))}
+                            </SelectContent>
+                          </Select>
+                        </div>
+
+                        {/* Generate Image Button */}
+                        <Button
+                          className="w-full bg-[#9333ea] hover:bg-[#7e22ce] text-white font-semibold"
+                          onClick={generateImage}
+                          disabled={isImageGenerating || !imagePrompt.trim()}
                         >
-                          <SelectTrigger className="bg-[#0a0a0a] border-[#333]">
-                            <SelectValue />
-                          </SelectTrigger>
-                          <SelectContent className="bg-[#1a1a1a] border-[#333]">
-                            {STYLE_PRESETS.map((preset) => (
-                              <SelectItem key={preset.id} value={preset.id}>
-                                <span className="flex items-center gap-2">
-                                  <span
-                                    className="w-3 h-3 rounded-full"
-                                    style={{ backgroundColor: preset.color }}
+                          {isImageGenerating ? (
+                            <>
+                              <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                              이미지 생성 중...
+                            </>
+                          ) : (
+                            <>
+                              <ImageIcon className="w-4 h-4 mr-2" />
+                              이미지 생성 (Flux.1)
+                            </>
+                          )}
+                        </Button>
+
+                        {/* Generated Images Preview */}
+                        {generatedImages.length > 0 && (
+                          <div className="mt-4">
+                            <label className="text-xs text-gray-500 mb-2 block">
+                              생성된 이미지 ({generatedImages.length})
+                            </label>
+                            <div className="grid grid-cols-2 gap-2">
+                              {generatedImages.slice(-4).map((url, idx) => (
+                                <div
+                                  key={idx}
+                                  className="relative aspect-square rounded-lg overflow-hidden border border-[#333] hover:border-[#03C75A] cursor-pointer transition-all"
+                                  onClick={() => {
+                                    // 클릭 시 타임라인에 추가
+                                    addClipToTimeline({
+                                      id: `img_${Date.now()}_${idx}`,
+                                      name: `Image ${idx + 1}`,
+                                      type: "image",
+                                      url: url,
+                                      startTime: 0,
+                                      duration: 3,
+                                      trackIndex: 2,
+                                    });
+                                    toast.success("🖼️ 타임라인에 추가됨");
+                                  }}
+                                >
+                                  <img
+                                    src={url}
+                                    alt={`Generated ${idx + 1}`}
+                                    className="w-full h-full object-cover"
                                   />
-                                  {preset.name}
-                                </span>
-                              </SelectItem>
-                            ))}
-                          </SelectContent>
-                        </Select>
-                      </div>
-                    </div>
-
-                    {/* Generate Button */}
-                    <Button
-                      className="w-full bg-[#03C75A] hover:bg-[#02a84d] text-white font-semibold"
-                      onClick={generateVideo}
-                      disabled={generationStatus.isGenerating || !prompt.trim()}
-                    >
-                      {generationStatus.isGenerating ? (
-                        <>
-                          <Loader2 className="w-4 h-4 mr-2 animate-spin" />
-                          생성 중... ({generationStatus.progress}%)
-                        </>
-                      ) : (
-                        <>
-                          <Sparkles className="w-4 h-4 mr-2" />
-                          영상 생성
-                        </>
-                      )}
-                    </Button>
+                                </div>
+                              ))}
+                            </div>
+                          </div>
+                        )}
+                      </>
+                    )}
 
                     {/* 🎵 음악/자막 추가 버튼 */}
                     <div className="grid grid-cols-2 gap-2 mt-3">
