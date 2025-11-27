@@ -73,29 +73,20 @@ class VideoResponse(BaseModel):
 
 class GoAPIEngine:
     """
-    통합 GoAPI 엔진
-    - Kling, Veo, Sora, Hailuo, Luma 모두 이 클래스로 처리
-    - 복잡한 분기 처리 없이 단순하게 모델명만 변경
+    통합 GoAPI 엔진 (2024 신규 API 형식)
+    - 모든 모델: POST /api/v1/task 통합 엔드포인트 사용
+    - task_type으로 작업 종류 구분
     """
     
-    BASE_URL = "https://api.goapi.ai/api"
+    BASE_URL = "https://api.goapi.ai/api/v1"
     
-    # 모델별 GoAPI 엔드포인트 매핑
-    MODEL_ENDPOINTS = {
-        VideoModel.KLING: "/kling/v1/videos/text2video",
-        VideoModel.VEO: "/veo/v1/videos/generate",
-        VideoModel.SORA: "/sora/v1/videos/generate",
-        VideoModel.HAILUO: "/hailuo/v1/videos/generate",
-        VideoModel.LUMA: "/luma/v1/videos/generate",
-    }
-    
-    # 모델별 상태 조회 엔드포인트
-    STATUS_ENDPOINTS = {
-        VideoModel.KLING: "/kling/v1/videos/text2video",
-        VideoModel.VEO: "/veo/v1/videos",
-        VideoModel.SORA: "/sora/v1/videos",
-        VideoModel.HAILUO: "/hailuo/v1/videos",
-        VideoModel.LUMA: "/luma/v1/videos",
+    # 모델별 task_type 매핑
+    MODEL_TASK_TYPES = {
+        VideoModel.KLING: "video_generation",
+        VideoModel.VEO: "video_generation",
+        VideoModel.SORA: "video_generation",
+        VideoModel.HAILUO: "video_generation",
+        VideoModel.LUMA: "video_generation",
     }
     
     def __init__(self):
@@ -105,38 +96,35 @@ class GoAPIEngine:
     
     def _get_headers(self) -> Dict[str, str]:
         return {
-            "Authorization": f"Bearer {self.api_key}",
+            "x-api-key": self.api_key,
             "Content-Type": "application/json",
-            "X-API-KEY": self.api_key,
         }
     
     def _build_request_body(self, request: VideoRequest) -> Dict[str, Any]:
         """
-        모델에 관계없이 통일된 요청 본문 생성
-        GoAPI가 내부적으로 모델별 변환 처리
+        GoAPI 신규 통합 형식으로 요청 본문 생성
         """
         
         # 기본 아이폰 감성 프롬프트 보강
         enhanced_prompt = self._enhance_prompt(request.prompt, request.style_preset)
         
+        # 통합 요청 형식
         body = {
-            "prompt": enhanced_prompt,
-            "aspect_ratio": request.aspect_ratio.value,
-            "duration": str(request.duration),
+            "model": request.model.value,  # kling, veo, sora, hailuo, luma
+            "task_type": self.MODEL_TASK_TYPES.get(request.model, "video_generation"),
+            "input": {
+                "prompt": enhanced_prompt,
+                "aspect_ratio": request.aspect_ratio.value,
+                "duration": request.duration,  # 숫자로 전달 (중요!)
+            }
         }
         
         # 선택적 파라미터
         if request.negative_prompt:
-            body["negative_prompt"] = request.negative_prompt
+            body["input"]["negative_prompt"] = request.negative_prompt
         
         if request.image_url:
-            body["image_url"] = request.image_url
-            
-        # Kling 특화 파라미터
-        if request.model == VideoModel.KLING:
-            body["model_name"] = "kling-v1-5"
-            body["mode"] = "std"
-            body["cfg_scale"] = 0.5
+            body["input"]["image_url"] = request.image_url
             
         return body
     
@@ -155,9 +143,8 @@ class GoAPIEngine:
     
     async def generate_video(self, request: VideoRequest) -> VideoResponse:
         """
-        통합 영상 생성 함수
-        - 모든 모델이 이 하나의 함수로 처리됨
-        - 분기 처리 최소화
+        통합 영상 생성 함수 (GoAPI 신규 형식)
+        - POST /api/v1/task 엔드포인트 사용
         """
         
         if not self.api_key:
@@ -168,20 +155,12 @@ class GoAPIEngine:
                 model=request.model.value
             )
         
-        endpoint = self.MODEL_ENDPOINTS.get(request.model)
-        if not endpoint:
-            return VideoResponse(
-                success=False,
-                status="error",
-                message=f"지원하지 않는 모델: {request.model}",
-                model=request.model.value
-            )
-        
-        url = f"{self.BASE_URL}{endpoint}"
+        url = f"{self.BASE_URL}/task"
         body = self._build_request_body(request)
         
         print(f"🎬 GoAPI 요청: {request.model.value} -> {url}")
         print(f"   프롬프트: {request.prompt[:50]}...")
+        print(f"   요청 본문: {body}")
         
         try:
             async with httpx.AsyncClient(timeout=60.0) as client:
@@ -192,12 +171,12 @@ class GoAPIEngine:
                 )
                 
                 print(f"   응답 상태: {response.status_code}")
+                print(f"   응답 내용: {response.text[:500]}")
                 
-                if response.status_code == 200:
-                    data = response.json()
-                    
-                    # GoAPI 공통 응답 구조
-                    task_id = data.get("data", {}).get("task_id") or data.get("task_id")
+                data = response.json()
+                
+                if data.get("code") == 200:
+                    task_id = data.get("data", {}).get("task_id")
                     
                     return VideoResponse(
                         success=True,
@@ -208,13 +187,13 @@ class GoAPIEngine:
                         progress=10
                     )
                 else:
-                    error_msg = response.text[:200]
+                    error_msg = data.get("message", "Unknown error")
                     print(f"   ❌ 오류: {error_msg}")
                     
                     return VideoResponse(
                         success=False,
                         status="error",
-                        message=f"API 오류: {response.status_code}",
+                        message=f"API 오류: {error_msg}",
                         model=request.model.value
                     )
                     
@@ -229,7 +208,8 @@ class GoAPIEngine:
     
     async def check_status(self, task_id: str, model: VideoModel) -> VideoResponse:
         """
-        통합 상태 조회 함수
+        통합 상태 조회 함수 (GoAPI 신규 형식)
+        - GET /api/v1/task/{task_id} 엔드포인트 사용
         """
         
         if not self.api_key or not task_id:
@@ -239,36 +219,36 @@ class GoAPIEngine:
                 message="필수 파라미터 누락"
             )
         
-        base_endpoint = self.STATUS_ENDPOINTS.get(model, "/kling/v1/videos/text2video")
-        url = f"{self.BASE_URL}{base_endpoint}/{task_id}"
+        url = f"{self.BASE_URL}/task/{task_id}"
         
         try:
             async with httpx.AsyncClient(timeout=30.0) as client:
                 response = await client.get(url, headers=self._get_headers())
                 
-                if response.status_code == 200:
-                    data = response.json()
-                    
-                    # GoAPI 공통 상태 구조
-                    status = data.get("data", {}).get("status", "processing")
+                data = response.json()
+                
+                if data.get("code") == 200:
+                    task_data = data.get("data", {})
+                    status = task_data.get("status", "processing")
                     video_url = None
                     progress = 50
                     
+                    # 상태별 처리
                     if status == "completed" or status == "succeed":
-                        # 비디오 URL 추출 (모델별로 약간 다를 수 있음)
-                        videos = data.get("data", {}).get("videos", [])
-                        if videos:
-                            video_url = videos[0].get("url")
-                        else:
-                            video_url = data.get("data", {}).get("video_url")
+                        # 비디오 URL 추출
+                        output = task_data.get("output", {})
+                        works = output.get("works", [])
+                        if works:
+                            video_url = works[0].get("resource", {}).get("resource")
                         
                         progress = 100
                         status = "completed"
                     elif status == "failed":
                         progress = 0
-                    else:
-                        # 진행 중
-                        progress = min(90, progress + 10)
+                    elif status == "processing":
+                        progress = 50
+                    elif status == "pending":
+                        progress = 10
                     
                     return VideoResponse(
                         success=True,

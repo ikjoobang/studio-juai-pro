@@ -204,54 +204,53 @@ async def generate_video(request: VideoGenerateRequest, background_tasks: Backgr
     )
     
     # GoAPI 호출
+    print(f"🎬 [VIDEO GENERATE] 프로젝트: {request.project_id}")
+    print(f"   모델: {request.model}, 비율: {request.aspect_ratio}")
+    print(f"   프롬프트: {request.prompt[:100]}...")
+    
     result = await goapi.generate_video(video_request)
     
-    if result.success and result.task_id:
-        # Task 저장
-        task_store[request.project_id] = {
-            "task_id": result.task_id,
-            "model": video_model,
-            "status": "processing",
-            "progress": 10,
-            "video_url": None,
-            "created_at": datetime.utcnow().isoformat()
-        }
-        
-        # 백그라운드에서 상태 폴링
-        background_tasks.add_task(poll_video_status, request.project_id, result.task_id, video_model)
-        
-        return VideoStatusResponse(
-            success=True,
-            project_id=request.project_id,
-            task_id=result.task_id,
-            status="processing",
-            progress=10,
-            message=f"{request.model.upper()} 영상 생성이 시작되었습니다.",
-            model=request.model
+    # ❌ 실패 시 명확한 에러 반환 (Demo 모드 없음!)
+    if not result.success:
+        error_msg = result.message or "알 수 없는 GoAPI 오류"
+        print(f"❌ [GOAPI ERROR] {error_msg}")
+        raise HTTPException(
+            status_code=500, 
+            detail=f"영상 생성 실패: {error_msg}"
         )
-    else:
-        # GoAPI 실패시 Demo 모드
-        task_store[request.project_id] = {
-            "task_id": f"demo_{request.project_id}",
-            "model": video_model,
-            "status": "processing",
-            "progress": 0,
-            "video_url": None,
-            "created_at": datetime.utcnow().isoformat()
-        }
-        
-        # Demo 진행 시작
-        background_tasks.add_task(simulate_video_progress, request.project_id, request.aspect_ratio)
-        
-        return VideoStatusResponse(
-            success=True,
-            project_id=request.project_id,
-            task_id=f"demo_{request.project_id}",
-            status="processing",
-            progress=0,
-            message="영상 생성이 시작되었습니다. (Demo Mode)",
-            model=request.model
+    
+    if not result.task_id:
+        print(f"❌ [GOAPI ERROR] task_id 없음")
+        raise HTTPException(
+            status_code=500, 
+            detail="영상 생성 실패: GoAPI에서 task_id를 반환하지 않았습니다."
         )
+    
+    # ✅ 성공 시에만 Task 저장
+    task_store[request.project_id] = {
+        "task_id": result.task_id,
+        "model": video_model,
+        "status": "processing",
+        "progress": 10,
+        "video_url": None,
+        "error_message": None,
+        "created_at": datetime.utcnow().isoformat()
+    }
+    
+    # 백그라운드에서 상태 폴링
+    background_tasks.add_task(poll_video_status, request.project_id, result.task_id, video_model)
+    
+    print(f"✅ [GOAPI SUCCESS] task_id: {result.task_id}")
+    
+    return VideoStatusResponse(
+        success=True,
+        project_id=request.project_id,
+        task_id=result.task_id,
+        status="processing",
+        progress=10,
+        message=f"{request.model.upper()} 영상 생성이 시작되었습니다.",
+        model=request.model
+    )
 
 
 async def poll_video_status(project_id: str, task_id: str, model: VideoModel):
@@ -276,36 +275,8 @@ async def poll_video_status(project_id: str, task_id: str, model: VideoModel):
                 break
 
 
-async def simulate_video_progress(project_id: str, aspect_ratio: str):
-    """Demo 모드 진행 시뮬레이션"""
-    
-    stages = [
-        (10, "AI가 프롬프트를 분석하고 있습니다..."),
-        (25, "최적의 영상 스타일을 선택하는 중..."),
-        (40, "영상 소스를 생성하고 있습니다..."),
-        (55, "아이폰 감성 색감을 적용하는 중..."),
-        (70, "음악과 효과를 추가하는 중..."),
-        (85, "최종 렌더링 진행 중..."),
-        (100, "영상 생성 완료!"),
-    ]
-    
-    for progress, message in stages:
-        await asyncio.sleep(1)
-        
-        if project_id in task_store:
-            task_store[project_id]["progress"] = progress
-            task_store[project_id]["message"] = message
-            
-            if progress == 100:
-                # Demo 영상 URL
-                demo_videos = {
-                    "9:16": "https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/ForBiggerBlazes.mp4",
-                    "16:9": "https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/BigBuckBunny.mp4",
-                    "1:1": "https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/ElephantsDream.mp4",
-                    "4:5": "https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/ForBiggerEscapes.mp4",
-                }
-                task_store[project_id]["status"] = "completed"
-                task_store[project_id]["video_url"] = demo_videos.get(aspect_ratio, demo_videos["9:16"])
+# ❌ Demo 모드 완전 삭제 - 가짜 영상 URL 반환하지 않음
+# simulate_video_progress 함수 제거됨
 
 
 @app.get("/api/video/progress/{project_id}", response_model=VideoStatusResponse)
