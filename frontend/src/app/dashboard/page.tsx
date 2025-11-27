@@ -47,8 +47,16 @@ import {
 import { cn } from "@/lib/utils";
 import toast, { Toaster } from "react-hot-toast";
 
-// API Base URL - Railway Production
-const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || "https://studio-juai-pro-production.up.railway.app";
+// ============================================
+// API Base URL - Railway Production (하드코딩)
+// ============================================
+// 환경변수 문제 방지를 위해 직접 하드코딩
+const API_BASE_URL = "https://studio-juai-pro-production.up.railway.app";
+
+// 디버깅용 로그
+if (typeof window !== "undefined") {
+  console.log("🔗 [API] Base URL:", API_BASE_URL);
+}
 
 // ============================================
 // Types
@@ -385,9 +393,31 @@ export default function DashboardPage() {
       // Start polling
       await pollVideoProgress(projectId);
     } catch (err) {
-      const errorMsg = err instanceof Error ? err.message : "알 수 없는 오류";
-      console.error("❌ [API] 오류:", errorMsg);
+      // 상세 에러 정보 추출
+      let errorMsg = "알 수 없는 오류";
+      let errorDetail = "";
+      
+      if (err instanceof Error) {
+        errorMsg = err.message;
+        // CORS 에러 감지
+        if (err.message.includes("Failed to fetch") || err.message.includes("NetworkError")) {
+          errorMsg = "서버 연결 실패 (CORS 또는 네트워크 오류)";
+          errorDetail = `\n\n[디버깅 정보]\n- API URL: ${API_BASE_URL}\n- 브라우저 콘솔(F12)에서 상세 에러 확인`;
+        }
+      }
+      
+      console.error("❌ [API 오류]", {
+        message: errorMsg,
+        url: `${API_BASE_URL}/api/video/generate`,
+        error: err
+      });
+      
+      // Toast 알림
       toast.error(`생성 실패: ${errorMsg}`, { id: "generating" });
+      
+      // Alert 팝업 (디버깅용)
+      alert(`❌ API 오류 발생!\n\n${errorMsg}${errorDetail}\n\nAPI URL: ${API_BASE_URL}`);
+      
       setError(errorMsg);
       setGenerationStatus({
         isGenerating: false,
@@ -497,8 +527,23 @@ export default function DashboardPage() {
         await new Promise((r) => setTimeout(r, pollInterval));
         attempts++;
       } catch (err) {
-        const errorMsg = err instanceof Error ? err.message : "오류 발생";
-        console.error(`❌ [폴링 오류] ${errorMsg}`);
+        let errorMsg = "오류 발생";
+        
+        if (err instanceof Error) {
+          errorMsg = err.message;
+          // CORS/네트워크 에러 감지
+          if (err.message.includes("Failed to fetch") || err.message.includes("NetworkError")) {
+            errorMsg = "폴링 중 서버 연결 실패 (CORS 또는 네트워크 오류)";
+          }
+        }
+        
+        console.error(`❌ [폴링 오류] ${errorMsg}`, err);
+        
+        // Alert 팝업 (첫 번째 에러에서만)
+        if (attempts === 0) {
+          alert(`❌ 폴링 오류!\n\n${errorMsg}\n\nAPI URL: ${API_BASE_URL}/api/video/progress/${projectId}`);
+        }
+        
         setError(errorMsg);
         setGenerationStatus({
           isGenerating: false,

@@ -60,12 +60,17 @@ app = FastAPI(
     redoc_url="/redoc"
 )
 
+# ============================================
+# CORS - 모든 도메인 허용 (테스트용)
+# ============================================
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
-    allow_methods=["*"],
+    allow_origins=["*"],  # 모든 도메인 허용
+    allow_credentials=False,  # credentials와 *는 함께 사용 불가
+    allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS", "PATCH"],
     allow_headers=["*"],
+    expose_headers=["*"],
+    max_age=86400,  # Preflight 캐싱 24시간
 )
 
 # ============================================
@@ -257,6 +262,35 @@ class VendorRequest(BaseModel):
 
 class TrendRequest(BaseModel):
     trends: List[str]
+
+
+# ============================================
+# Global Exception Handler - 모든 에러를 JSON으로 반환
+# ============================================
+from fastapi import Request
+from fastapi.responses import JSONResponse
+
+@app.exception_handler(Exception)
+async def global_exception_handler(request: Request, exc: Exception):
+    """모든 예외를 잡아서 JSON 형태로 반환 (프론트엔드 디버깅용)"""
+    error_detail = str(exc)
+    print(f"❌ [GLOBAL ERROR] {request.method} {request.url.path}: {error_detail}")
+    
+    return JSONResponse(
+        status_code=500,
+        content={
+            "success": False,
+            "error": error_detail,
+            "path": str(request.url.path),
+            "method": request.method,
+            "timestamp": datetime.utcnow().isoformat()
+        },
+        headers={
+            "Access-Control-Allow-Origin": "*",
+            "Access-Control-Allow-Methods": "*",
+            "Access-Control-Allow-Headers": "*",
+        }
+    )
 
 
 # ============================================
