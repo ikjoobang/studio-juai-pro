@@ -5,7 +5,7 @@
  * PREMIERE PRO STYLE: 하단 60% 영역에 전체 너비로 배치
  */
 
-import { useState, useRef, useMemo } from "react";
+import { useState, useRef, useMemo, useEffect, useCallback } from "react";
 import { motion } from "framer-motion";
 import {
   Film,
@@ -54,12 +54,26 @@ const defaultTracks: Track[] = [
 export default function Timeline({ expanded = false }: TimelineProps) {
   const [zoom, setZoom] = useState(100);
   const [selectedTrackId, setSelectedTrackId] = useState<string | null>(null);
-  const [playheadPosition, setPlayheadPosition] = useState(0);
   const [tracks, setTracks] = useState<Track[]>(defaultTracks);
-  const [isPlaying, setIsPlaying] = useState(false);
   const timelineRef = useRef<HTMLDivElement>(null);
 
-  const { timeline, selectedClipId, selectClip, removeClip } = useVideoStore();
+  // ✅ VideoStore와 동기화 - VideoPlayer와 Timeline 연동
+  const { 
+    timeline, 
+    selectedClipId, 
+    selectClip, 
+    removeClip,
+    // Video Player 상태 연동
+    currentTime,
+    duration: videoDuration,
+    isPlaying,
+    setPlaying,
+    setCurrentTime,
+    videoUrl,
+  } = useVideoStore();
+
+  // ✅ playheadPosition을 currentTime(초)에서 밀리초로 변환하여 사용
+  const playheadPosition = currentTime * 1000;
 
   const totalDuration = useMemo(() => {
     if (timeline.length === 0) return 15000;
@@ -108,13 +122,17 @@ export default function Timeline({ expanded = false }: TimelineProps) {
     return timeline.filter(clip => allowedTypes.includes(clip.type));
   };
 
-  const handleTimelineClick = (e: React.MouseEvent<HTMLDivElement>) => {
+  // ✅ 타임라인 클릭 시 VideoPlayer의 currentTime도 동기화
+  const handleTimelineClick = useCallback((e: React.MouseEvent<HTMLDivElement>) => {
     if (!timelineRef.current) return;
     const rect = timelineRef.current.getBoundingClientRect();
     const x = e.clientX - rect.left;
-    const time = (x / pixelsPerSecond) * 1000;
-    setPlayheadPosition(Math.max(0, Math.min(time, totalDuration)));
-  };
+    const timeMs = (x / pixelsPerSecond) * 1000;
+    const clampedTime = Math.max(0, Math.min(timeMs, totalDuration));
+    
+    // VideoStore의 currentTime 업데이트 (초 단위)
+    setCurrentTime(clampedTime / 1000);
+  }, [pixelsPerSecond, totalDuration, setCurrentTime]);
 
   const toggleTrackLock = (trackId: string) => {
     setTracks(prev => prev.map(t => (t.id === trackId ? { ...t, locked: !t.locked } : t)));
@@ -133,18 +151,29 @@ export default function Timeline({ expanded = false }: TimelineProps) {
       {/* Timeline Header */}
       <div className="flex items-center justify-between px-2 py-1.5 border-b border-[#333] bg-[#252525] flex-shrink-0">
         <div className="flex items-center gap-3">
-          {/* Playback Controls */}
+          {/* ✅ Playback Controls - VideoStore와 연동 */}
           <div className="flex items-center gap-1 border-r border-[#444] pr-3 mr-2">
-            <button className="p-1 hover:bg-[#333] rounded text-gray-400 hover:text-white">
+            <button 
+              onClick={() => setCurrentTime(Math.max(0, currentTime - 5))}
+              className="p-1 hover:bg-[#333] rounded text-gray-400 hover:text-white"
+              title="5초 뒤로"
+            >
               <SkipBack className="w-4 h-4" />
             </button>
             <button 
-              onClick={() => setIsPlaying(!isPlaying)}
-              className="p-1.5 hover:bg-[#333] rounded text-white bg-[#333]"
+              onClick={() => setPlaying(!isPlaying)}
+              disabled={!videoUrl}
+              className={`p-1.5 hover:bg-[#333] rounded text-white bg-[#333] 
+                         ${!videoUrl ? 'opacity-50 cursor-not-allowed' : ''}`}
+              title={isPlaying ? '일시정지' : '재생'}
             >
               {isPlaying ? <Pause className="w-4 h-4" /> : <Play className="w-4 h-4" />}
             </button>
-            <button className="p-1 hover:bg-[#333] rounded text-gray-400 hover:text-white">
+            <button 
+              onClick={() => setCurrentTime(Math.min((videoDuration || 0), currentTime + 5))}
+              className="p-1 hover:bg-[#333] rounded text-gray-400 hover:text-white"
+              title="5초 앞으로"
+            >
               <SkipForward className="w-4 h-4" />
             </button>
           </div>
@@ -348,7 +377,9 @@ export default function Timeline({ expanded = false }: TimelineProps) {
               dragElastic={0}
               onDrag={(e, info) => {
                 const newPos = (info.point.x / pixelsPerSecond) * 1000;
-                setPlayheadPosition(Math.max(0, Math.min(newPos, totalDuration)));
+                const clampedPos = Math.max(0, Math.min(newPos, totalDuration));
+                // VideoStore의 currentTime 업데이트 (초 단위)
+                setCurrentTime(clampedPos / 1000);
               }}
             >
               <div className="absolute -top-0 -left-1.5 w-4 h-3 bg-juai-green rounded-b-sm" />

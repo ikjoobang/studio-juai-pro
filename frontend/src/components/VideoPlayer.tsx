@@ -93,6 +93,19 @@ export default function VideoPlayer({ className = "", compact = false }: VideoPl
     }
   }, [volume, isMuted]);
 
+  // ✅ Timeline에서 currentTime 변경 시 video도 동기화 (외부에서 Seek)
+  useEffect(() => {
+    const video = videoRef.current;
+    if (!video || !videoUrl) return;
+    
+    // 현재 비디오 시간과 store의 currentTime 차이가 0.5초 이상이면 동기화
+    // (작은 차이는 자연스러운 재생이므로 무시)
+    const timeDiff = Math.abs(video.currentTime - currentTime);
+    if (timeDiff > 0.5) {
+      video.currentTime = currentTime;
+    }
+  }, [currentTime, videoUrl]);
+
   // Controls auto-hide
   const handleMouseMove = () => {
     setShowControls(true);
