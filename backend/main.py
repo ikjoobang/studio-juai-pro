@@ -1606,9 +1606,9 @@ RESPONSE FORMAT (JSON only, no markdown):
 Generate exactly {request.count} diverse templates now:"""
 
     try:
-        # Gemini API 호출
+        # Gemini API 호출 (gemini-2.0-flash 사용 - 더 빠르고 안정적)
         genai.configure(api_key=gemini_api_key)
-        model = genai.GenerativeModel('gemini-1.5-pro')
+        model = genai.GenerativeModel('gemini-2.0-flash')
         
         print(f"🤖 [Gemini] 템플릿 자동 생성 요청: category={request.category}, count={request.count}")
         
