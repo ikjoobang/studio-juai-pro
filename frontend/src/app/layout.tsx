@@ -3,12 +3,12 @@ import { Toaster } from "react-hot-toast";
 import "./globals.css";
 
 export const metadata: Metadata = {
-  title: "Super Agent Platform | Studio Juai",
-  description: "AI 네비게이터, 워크스페이스, B2B API 허브가 결합된 올인원 플랫폼",
-  keywords: ["AI", "영상 제작", "마케팅", "자동화", "Studio Juai"],
+  title: "Studio Juai PRO | Admin",
+  description: "AI 기반 영상 제작 플랫폼 - 통합 GoAPI 엔진",
+  keywords: ["AI", "영상 제작", "GoAPI", "Kling", "Veo", "Sora", "Studio Juai"],
   authors: [{ name: "Studio Juai" }],
   openGraph: {
-    title: "Super Agent Platform",
+    title: "Studio Juai PRO",
     description: "AI 기반 콘텐츠 제작 플랫폼",
     type: "website",
     locale: "ko_KR",

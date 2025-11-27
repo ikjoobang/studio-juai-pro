@@ -3,10 +3,10 @@ module.exports = {
     {
       name: 'super-agent-frontend',
       script: 'npm',
-      args: 'run start',
+      args: 'run dev',
       cwd: '/home/user/webapp/super-agent-platform/frontend',
       env: {
-        NODE_ENV: 'production',
+        NODE_ENV: 'development',
         PORT: 3000
       },
       watch: false,

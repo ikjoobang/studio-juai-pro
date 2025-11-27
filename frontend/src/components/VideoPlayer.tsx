@@ -1,8 +1,8 @@
 "use client";
 
 /**
- * VideoPlayer - 메인 비디오 플레이어 컴포넌트
- * VIDEO FIRST: 화면의 HERO 영역, 렌더링 프로그레스 바 포함
+ * VideoPlayer - 컴팩트 비디오 플레이어 컴포넌트
+ * PREMIERE PRO STYLE: 좌측 상단 영역에 배치
  */
 
 import { useRef, useEffect, useState } from "react";
@@ -15,23 +15,20 @@ import {
   Maximize,
   SkipBack,
   SkipForward,
-  Settings,
-  Download,
-  Share2,
-  RefreshCw,
-  Sparkles,
   Video,
   Loader2,
   CheckCircle2,
   AlertCircle,
+  RefreshCw,
 } from "lucide-react";
-import { useVideoStore, RenderStatus } from "@/lib/store";
+import { useVideoStore } from "@/lib/store";
 
 interface VideoPlayerProps {
   className?: string;
+  compact?: boolean;
 }
 
-export default function VideoPlayer({ className = "" }: VideoPlayerProps) {
+export default function VideoPlayer({ className = "", compact = false }: VideoPlayerProps) {
   const videoRef = useRef<HTMLVideoElement>(null);
   const progressRef = useRef<HTMLDivElement>(null);
   const [showControls, setShowControls] = useState(true);
@@ -99,22 +96,16 @@ export default function VideoPlayer({ className = "" }: VideoPlayerProps) {
   // Controls auto-hide
   const handleMouseMove = () => {
     setShowControls(true);
-    if (controlsTimeoutRef.current) {
-      clearTimeout(controlsTimeoutRef.current);
-    }
+    if (controlsTimeoutRef.current) clearTimeout(controlsTimeoutRef.current);
     controlsTimeoutRef.current = setTimeout(() => {
       if (isPlaying) setShowControls(false);
-    }, 3000);
+    }, 2000);
   };
 
-  // Playback controls
   const togglePlay = () => {
     if (!videoRef.current) return;
-    if (isPlaying) {
-      videoRef.current.pause();
-    } else {
-      videoRef.current.play().catch(console.error);
-    }
+    if (isPlaying) videoRef.current.pause();
+    else videoRef.current.play().catch(console.error);
   };
 
   const handleSeek = (e: React.MouseEvent<HTMLDivElement>) => {
@@ -138,52 +129,29 @@ export default function VideoPlayer({ className = "" }: VideoPlayerProps) {
   const toggleFullscreen = () => {
     const container = videoRef.current?.parentElement?.parentElement;
     if (!container) return;
-    
-    if (document.fullscreenElement) {
-      document.exitFullscreen();
-    } else {
-      container.requestFullscreen();
-    }
+    if (document.fullscreenElement) document.exitFullscreen();
+    else container.requestFullscreen();
   };
 
-  // Render status icon
   const getStatusIcon = () => {
     switch (renderStatus) {
-      case "preparing":
-        return <RefreshCw className="w-8 h-8 animate-spin" />;
-      case "rendering":
-        return <Loader2 className="w-8 h-8 animate-spin" />;
-      case "completed":
-        return <CheckCircle2 className="w-8 h-8" />;
-      case "failed":
-        return <AlertCircle className="w-8 h-8" />;
-      default:
-        return <Video className="w-8 h-8" />;
-    }
-  };
-
-  // Aspect ratio class
-  const getAspectRatioClass = () => {
-    switch (currentProject?.aspectRatio) {
-      case "9:16":
-        return "aspect-[9/16] max-h-[70vh]";
-      case "1:1":
-        return "aspect-square max-h-[70vh]";
-      case "4:5":
-        return "aspect-[4/5] max-h-[70vh]";
-      default:
-        return "aspect-video";
+      case "preparing": return <RefreshCw className="w-6 h-6 animate-spin" />;
+      case "rendering": return <Loader2 className="w-6 h-6 animate-spin" />;
+      case "completed": return <CheckCircle2 className="w-6 h-6" />;
+      case "failed": return <AlertCircle className="w-6 h-6" />;
+      default: return <Video className="w-6 h-6" />;
     }
   };
 
   return (
     <div
-      className={`relative bg-juai-night rounded-2xl overflow-hidden ${className}`}
+      className={`relative bg-[#0d0d0d] rounded-lg overflow-hidden ${className}`}
       onMouseMove={handleMouseMove}
       onMouseLeave={() => isPlaying && setShowControls(false)}
     >
       {/* Video Container */}
-      <div className="flex items-center justify-center bg-black/90 min-h-[400px]">
+      <div className="flex items-center justify-center h-full bg-black">
+        
         {/* Rendering Progress Overlay */}
         <AnimatePresence>
           {(renderStatus === "preparing" || renderStatus === "rendering") && (
@@ -191,125 +159,68 @@ export default function VideoPlayer({ className = "" }: VideoPlayerProps) {
               initial={{ opacity: 0 }}
               animate={{ opacity: 1 }}
               exit={{ opacity: 0 }}
-              className="absolute inset-0 z-20 flex items-center justify-center 
-                       bg-gradient-to-b from-juai-night/95 to-black/95"
+              className="absolute inset-0 z-20 flex items-center justify-center bg-black/90"
             >
-              <div className="text-center px-8 max-w-md">
-                {/* Animated Icon */}
+              <div className="text-center px-4">
                 <motion.div
                   animate={{ scale: [1, 1.1, 1] }}
-                  transition={{ repeat: Infinity, duration: 2 }}
-                  className="w-20 h-20 mx-auto mb-6 rounded-2xl bg-gradient-juai 
+                  transition={{ repeat: Infinity, duration: 1.5 }}
+                  className="w-12 h-12 mx-auto mb-3 rounded-xl bg-gradient-juai 
                            flex items-center justify-center text-white"
                 >
                   {getStatusIcon()}
                 </motion.div>
 
-                {/* Progress Bar - THE HERO */}
-                <div className="mb-4">
-                  <div className="flex items-center justify-between mb-2">
-                    <span className="text-sm text-white/60">렌더링 진행률</span>
-                    <span className="text-2xl font-bold text-white">
-                      {renderProgress}%
-                    </span>
+                {/* Compact Progress Bar */}
+                <div className="w-48 mx-auto mb-2">
+                  <div className="flex items-center justify-between mb-1">
+                    <span className="text-xs text-gray-400">렌더링</span>
+                    <span className="text-sm font-bold text-white">{renderProgress}%</span>
                   </div>
-                  
-                  <div className="relative h-4 bg-white/10 rounded-full overflow-hidden">
+                  <div className="h-1.5 bg-white/10 rounded-full overflow-hidden">
                     <motion.div
-                      className="absolute inset-y-0 left-0 bg-gradient-juai rounded-full"
+                      className="h-full bg-gradient-juai rounded-full"
                       initial={{ width: 0 }}
                       animate={{ width: `${renderProgress}%` }}
-                      transition={{ duration: 0.5 }}
-                    />
-                    
-                    {/* Shimmer Effect */}
-                    <motion.div
-                      className="absolute inset-0 bg-gradient-to-r from-transparent 
-                               via-white/20 to-transparent"
-                      animate={{ x: ["-100%", "100%"] }}
-                      transition={{ repeat: Infinity, duration: 1.5, ease: "linear" }}
                     />
                   </div>
                 </div>
 
-                {/* Status Message */}
-                <p className="text-white/80 text-lg font-medium mb-2">
-                  {renderMessage}
-                </p>
-                
-                <p className="text-white/40 text-sm">
-                  잠시만 기다려 주세요. AI가 영상을 제작하고 있습니다.
-                </p>
-
-                {/* Estimated Time */}
-                {renderProgress > 0 && renderProgress < 100 && (
-                  <p className="mt-4 text-white/50 text-xs">
-                    예상 소요 시간: 약 {Math.ceil((100 - renderProgress) / 10)} 분
-                  </p>
-                )}
+                <p className="text-white/60 text-xs">{renderMessage}</p>
               </div>
             </motion.div>
           )}
         </AnimatePresence>
 
         {/* Failed State */}
-        <AnimatePresence>
-          {renderStatus === "failed" && (
-            <motion.div
-              initial={{ opacity: 0 }}
-              animate={{ opacity: 1 }}
-              exit={{ opacity: 0 }}
-              className="absolute inset-0 z-20 flex items-center justify-center 
-                       bg-gradient-to-b from-juai-night/95 to-black/95"
-            >
-              <div className="text-center px-8">
-                <div className="w-20 h-20 mx-auto mb-6 rounded-2xl bg-red-500/20 
-                             flex items-center justify-center text-red-400">
-                  <AlertCircle className="w-10 h-10" />
-                </div>
-                <h3 className="text-xl font-bold text-white mb-2">
-                  렌더링 실패
-                </h3>
-                <p className="text-white/60 mb-6">{renderMessage}</p>
-                <button
-                  onClick={() => useVideoStore.getState().resetRender()}
-                  className="px-6 py-3 bg-white/10 text-white rounded-xl 
-                           hover:bg-white/20 transition-colors"
-                >
-                  다시 시도
-                </button>
+        {renderStatus === "failed" && (
+          <div className="absolute inset-0 z-20 flex items-center justify-center bg-black/90">
+            <div className="text-center px-4">
+              <div className="w-10 h-10 mx-auto mb-2 rounded-xl bg-red-500/20 
+                           flex items-center justify-center text-red-400">
+                <AlertCircle className="w-5 h-5" />
               </div>
-            </motion.div>
-          )}
-        </AnimatePresence>
+              <p className="text-white text-sm mb-1">렌더링 실패</p>
+              <p className="text-gray-400 text-xs mb-3">{renderMessage}</p>
+              <button
+                onClick={() => useVideoStore.getState().resetRender()}
+                className="px-3 py-1.5 bg-white/10 text-white rounded text-xs"
+              >
+                다시 시도
+              </button>
+            </div>
+          </div>
+        )}
 
         {/* Empty State */}
         {!videoUrl && renderStatus === "idle" && (
           <div className="absolute inset-0 flex items-center justify-center">
-            <div className="text-center px-8">
-              <motion.div
-                animate={{ y: [0, -10, 0] }}
-                transition={{ repeat: Infinity, duration: 3 }}
-                className="w-24 h-24 mx-auto mb-6 rounded-2xl bg-white/5 
-                         flex items-center justify-center text-white/30"
-              >
-                <Video className="w-12 h-12" />
-              </motion.div>
-              <h3 className="text-xl font-medium text-white/60 mb-2">
-                영상이 없습니다
-              </h3>
-              <p className="text-white/40 text-sm mb-6">
-                새 프로젝트를 시작하거나 영상을 생성해보세요
-              </p>
-              <button
-                onClick={() => useVideoStore.getState().startRender("test")}
-                className="px-6 py-3 bg-gradient-juai text-white rounded-xl 
-                         hover:opacity-90 transition-opacity font-medium
-                         flex items-center gap-2 mx-auto"
-              >
-                <Sparkles className="w-4 h-4" />
-                AI 영상 생성
-              </button>
+            <div className="text-center">
+              <div className="w-12 h-12 mx-auto mb-3 rounded-xl bg-white/5 
+                           flex items-center justify-center text-white/30">
+                <Video className="w-6 h-6" />
+              </div>
+              <p className="text-gray-500 text-sm">영상이 없습니다</p>
             </div>
           </div>
         )}
@@ -319,45 +230,22 @@ export default function VideoPlayer({ className = "" }: VideoPlayerProps) {
           <video
             ref={videoRef}
             src={videoUrl}
-            className={`${getAspectRatioClass()} w-auto mx-auto`}
+            className="max-h-full max-w-full object-contain"
             playsInline
             onClick={togglePlay}
           />
         )}
       </div>
 
-      {/* Controls Overlay */}
+      {/* Compact Controls Overlay */}
       <AnimatePresence>
         {showControls && videoUrl && renderStatus !== "rendering" && (
           <motion.div
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
             exit={{ opacity: 0 }}
-            className="absolute inset-0 bg-gradient-to-t from-black/80 via-transparent to-black/40"
+            className="absolute inset-0 bg-gradient-to-t from-black/70 via-transparent to-transparent"
           >
-            {/* Top Bar */}
-            <div className="absolute top-0 left-0 right-0 p-4 flex items-center justify-between">
-              <div>
-                <h3 className="text-white font-medium">
-                  {currentProject?.title || "새 프로젝트"}
-                </h3>
-                <p className="text-white/60 text-sm">
-                  {currentProject?.aspectRatio || "16:9"}
-                </p>
-              </div>
-              <div className="flex items-center gap-2">
-                <button className="p-2 hover:bg-white/10 rounded-lg transition-colors">
-                  <Share2 className="w-5 h-5 text-white" />
-                </button>
-                <button className="p-2 hover:bg-white/10 rounded-lg transition-colors">
-                  <Download className="w-5 h-5 text-white" />
-                </button>
-                <button className="p-2 hover:bg-white/10 rounded-lg transition-colors">
-                  <Settings className="w-5 h-5 text-white" />
-                </button>
-              </div>
-            </div>
-
             {/* Center Play Button */}
             <button
               onClick={togglePlay}
@@ -366,105 +254,52 @@ export default function VideoPlayer({ className = "" }: VideoPlayerProps) {
               <motion.div
                 whileHover={{ scale: 1.1 }}
                 whileTap={{ scale: 0.9 }}
-                className="w-16 h-16 bg-white/20 backdrop-blur-sm rounded-full 
+                className="w-10 h-10 bg-white/20 backdrop-blur-sm rounded-full 
                          flex items-center justify-center"
               >
                 {isPlaying ? (
-                  <Pause className="w-8 h-8 text-white" />
+                  <Pause className="w-5 h-5 text-white" />
                 ) : (
-                  <Play className="w-8 h-8 text-white ml-1" />
+                  <Play className="w-5 h-5 text-white ml-0.5" />
                 )}
               </motion.div>
             </button>
 
             {/* Bottom Controls */}
-            <div className="absolute bottom-0 left-0 right-0 p-4">
+            <div className="absolute bottom-0 left-0 right-0 p-2">
               {/* Progress Bar */}
               <div
                 ref={progressRef}
                 onClick={handleSeek}
-                className="h-1 bg-white/20 rounded-full mb-4 cursor-pointer 
-                         hover:h-2 transition-all group"
+                className="h-1 bg-white/20 rounded-full mb-2 cursor-pointer hover:h-1.5 transition-all"
               >
                 <div
-                  className="h-full bg-juai-green rounded-full relative"
+                  className="h-full bg-juai-green rounded-full"
                   style={{ width: `${(currentTime / duration) * 100}%` }}
-                >
-                  <div className="absolute right-0 top-1/2 -translate-y-1/2 w-3 h-3 
-                                bg-white rounded-full opacity-0 group-hover:opacity-100 
-                                transition-opacity" />
-                </div>
+                />
               </div>
 
               {/* Controls Row */}
-              <div className="flex items-center justify-between">
-                <div className="flex items-center gap-3">
-                  {/* Play/Pause */}
-                  <button
-                    onClick={togglePlay}
-                    className="p-2 hover:bg-white/10 rounded-lg transition-colors"
-                  >
-                    {isPlaying ? (
-                      <Pause className="w-5 h-5 text-white" />
-                    ) : (
-                      <Play className="w-5 h-5 text-white" />
-                    )}
+              <div className="flex items-center justify-between text-white">
+                <div className="flex items-center gap-1">
+                  <button onClick={togglePlay} className="p-1 hover:bg-white/10 rounded">
+                    {isPlaying ? <Pause className="w-4 h-4" /> : <Play className="w-4 h-4" />}
                   </button>
-
-                  {/* Skip Buttons */}
-                  <button
-                    onClick={() => skip(-10)}
-                    className="p-2 hover:bg-white/10 rounded-lg transition-colors"
-                  >
-                    <SkipBack className="w-5 h-5 text-white" />
+                  <button onClick={() => skip(-5)} className="p-1 hover:bg-white/10 rounded">
+                    <SkipBack className="w-4 h-4" />
                   </button>
-                  <button
-                    onClick={() => skip(10)}
-                    className="p-2 hover:bg-white/10 rounded-lg transition-colors"
-                  >
-                    <SkipForward className="w-5 h-5 text-white" />
+                  <button onClick={() => skip(5)} className="p-1 hover:bg-white/10 rounded">
+                    <SkipForward className="w-4 h-4" />
                   </button>
-
-                  {/* Volume */}
-                  <div className="flex items-center gap-2">
-                    <button
-                      onClick={toggleMute}
-                      className="p-2 hover:bg-white/10 rounded-lg transition-colors"
-                    >
-                      {isMuted ? (
-                        <VolumeX className="w-5 h-5 text-white" />
-                      ) : (
-                        <Volume2 className="w-5 h-5 text-white" />
-                      )}
-                    </button>
-                    <input
-                      type="range"
-                      min="0"
-                      max="1"
-                      step="0.1"
-                      value={isMuted ? 0 : volume}
-                      onChange={(e) => setVolume(parseFloat(e.target.value))}
-                      className="w-20 h-1 appearance-none bg-white/20 rounded-full 
-                               [&::-webkit-slider-thumb]:appearance-none 
-                               [&::-webkit-slider-thumb]:w-3 
-                               [&::-webkit-slider-thumb]:h-3 
-                               [&::-webkit-slider-thumb]:bg-white 
-                               [&::-webkit-slider-thumb]:rounded-full"
-                    />
-                  </div>
-
-                  {/* Time */}
-                  <span className="text-white/80 text-sm">
+                  <button onClick={toggleMute} className="p-1 hover:bg-white/10 rounded">
+                    {isMuted ? <VolumeX className="w-4 h-4" /> : <Volume2 className="w-4 h-4" />}
+                  </button>
+                  <span className="text-xs text-gray-300 ml-1">
                     {formatTime(currentTime)} / {formatTime(duration || 0)}
                   </span>
                 </div>
-
-                {/* Fullscreen */}
-                <button
-                  onClick={toggleFullscreen}
-                  className="p-2 hover:bg-white/10 rounded-lg transition-colors"
-                >
-                  <Maximize className="w-5 h-5 text-white" />
+                <button onClick={toggleFullscreen} className="p-1 hover:bg-white/10 rounded">
+                  <Maximize className="w-4 h-4" />
                 </button>
               </div>
             </div>
