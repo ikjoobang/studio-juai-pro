@@ -53,7 +53,7 @@ export default function ChatSidebar({ embedded = false }: ChatSidebarProps) {
   const [isExecutingAction, setIsExecutingAction] = useState(false);
   
   const messagesEndRef = useRef<HTMLDivElement>(null);
-  const inputRef = useRef<HTMLTextAreaElement>(null);
+  const inputRef = useRef<HTMLInputElement>(null);
   
   const { isChatOpen, setChatOpen, suggestions } = useChatStore();
   const { currentProject, videoUrl, addClip, updateProject } = useVideoStore();
