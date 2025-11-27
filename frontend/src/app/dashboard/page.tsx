@@ -1031,6 +1031,105 @@ export default function DashboardPage() {
                         </>
                       )}
                     </Button>
+
+                    {/* 🎵 음악/자막 추가 버튼 */}
+                    <div className="grid grid-cols-2 gap-2 mt-3">
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        className="border-[#333] hover:bg-[#333] text-gray-300"
+                        disabled={!canExport}
+                        onClick={async () => {
+                          if (!exportVideoUrl) {
+                            toast.error("먼저 영상을 생성해주세요");
+                            return;
+                          }
+                          toast.loading("🎵 배경음악 생성 중...", { id: "music" });
+                          try {
+                            const res = await fetch(`${API_BASE_URL}/api/music/generate`, {
+                              method: "POST",
+                              headers: { "Content-Type": "application/json" },
+                              body: JSON.stringify({
+                                project_id: currentProject?.id || `project_${Date.now()}`,
+                                prompt: "cinematic background music",
+                                mood: "cinematic",
+                                duration: 30,
+                              }),
+                            });
+                            const data = await res.json();
+                            if (res.ok && data.audio_url) {
+                              toast.success("🎵 음악이 추가되었습니다!", { id: "music" });
+                              addClipToTimeline({
+                                id: `music_${Date.now()}`,
+                                type: "audio",
+                                name: "🎵 BGM",
+                                startTime: 0,
+                                duration: 30,
+                                trackIndex: 1,
+                                url: data.audio_url,
+                                color: "#22c55e",
+                              });
+                            } else {
+                              toast.error(data.detail || "음악 생성 실패", { id: "music" });
+                            }
+                          } catch (err) {
+                            toast.error("음악 생성 오류", { id: "music" });
+                          }
+                        }}
+                      >
+                        <Music className="w-3 h-3 mr-1" />
+                        🎵 음악
+                      </Button>
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        className="border-[#333] hover:bg-[#333] text-gray-300"
+                        disabled={!canExport}
+                        onClick={async () => {
+                          if (!exportVideoUrl) {
+                            toast.error("먼저 영상을 생성해주세요");
+                            return;
+                          }
+                          const text = window.prompt("자막 텍스트를 입력하세요:");
+                          if (!text) return;
+                          
+                          toast.loading("📝 자막 추가 중...", { id: "subtitle" });
+                          try {
+                            const res = await fetch(`${API_BASE_URL}/api/creatomate/auto-edit`, {
+                              method: "POST",
+                              headers: { "Content-Type": "application/json" },
+                              body: JSON.stringify({
+                                project_id: currentProject?.id || `project_${Date.now()}`,
+                                video_url: exportVideoUrl,
+                                headline: text,
+                                style: "modern",
+                              }),
+                            });
+                            const data = await res.json();
+                            if (res.ok && data.success) {
+                              toast.success("📝 자막이 추가되었습니다!", { id: "subtitle" });
+                              addClipToTimeline({
+                                id: `text_${Date.now()}`,
+                                type: "text",
+                                name: text.substring(0, 10) + "...",
+                                startTime: 1,
+                                duration: 5,
+                                trackIndex: 2,
+                                content: text,
+                                color: "#eab308",
+                              });
+                            } else {
+                              toast.error(data.error || "자막 추가 실패", { id: "subtitle" });
+                            }
+                          } catch (err) {
+                            toast.error("자막 추가 오류", { id: "subtitle" });
+                          }
+                        }}
+                      >
+                        <Type className="w-3 h-3 mr-1" />
+                        📝 자막
+                      </Button>
+                    </div>
                   </div>
                 </ResizablePanel>
 

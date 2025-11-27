@@ -40,7 +40,8 @@ interface ChatSidebarProps {
   embedded?: boolean;
 }
 
-const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
+// Production URL 하드코딩 (환경변수 문제 방지)
+const API_BASE_URL = "https://studio-juai-pro-production.up.railway.app";
 
 // ✅ 빠른 작업 버튼 - 모달 트리거로 변경
 const quickActions = [
