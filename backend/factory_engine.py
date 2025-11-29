@@ -454,10 +454,10 @@ class GoAPIClient:
         VideoModel.KLING: {"task_type": "video_generation", "model": "kling"},  # GoAPI fallback
     }
     
-    # 음악 모델 설정
+    # 음악 모델 설정 (GoAPI 2024-11 스펙)
     MUSIC_CONFIG = {
-        AudioModel.SUNO: {"task_type": "generate_music", "model": "suno"},
-        AudioModel.UDIO: {"task_type": "generate_music", "model": "udio"},
+        AudioModel.SUNO: {"task_type": "suno-music", "model": "suno"},
+        AudioModel.UDIO: {"task_type": "udio-music", "model": "udio"},
     }
     
     # 이미지 모델 설정 (GoAPI 공식 문서 기준)
@@ -629,16 +629,28 @@ class GoAPIClient:
         config = self.MUSIC_CONFIG.get(audio_model, self.MUSIC_CONFIG[AudioModel.SUNO])
         
         url = f"{self.BASE_URL}/task"
-        body = {
-            "model": config["model"],
-            "task_type": config["task_type"],
-            "input": {
-                "prompt": request.prompt,
-                "style": request.style,
-                "duration": request.duration,
-                "instrumental": request.instrumental
+        
+        # GoAPI Suno/Udio 스펙에 맞는 파라미터
+        if audio_model == AudioModel.SUNO:
+            body = {
+                "model": "suno",
+                "task_type": "suno-music",
+                "input": {
+                    "gpt_description_prompt": request.prompt,
+                    "make_instrumental": request.instrumental,
+                    "mv": "chirp-v3-5"  # 최신 Suno 모델
+                }
             }
-        }
+        else:
+            # Udio
+            body = {
+                "model": "udio",
+                "task_type": "udio-music",
+                "input": {
+                    "prompt": request.prompt,
+                    "seed": -1
+                }
+            }
         
         print(f"🎵 [GoAPI {audio_model.value.upper()}] 음악 생성 요청")
         print(f"   프롬프트: {request.prompt[:80]}...")
@@ -747,16 +759,25 @@ class GoAPIClient:
         
         # 모델별 body 구성
         if request.model == ImageModel.FLUX:
-            # Flux.1 Pro - GoAPI 공식 파라미터
+            # Flux.1 Pro - GoAPI 공식 파라미터 (2024-11 업데이트)
+            # 9:16 = 768x1344, 16:9 = 1344x768, 1:1 = 1024x1024
+            if request.aspect_ratio == AspectRatio.PORTRAIT:
+                width, height = 768, 1344
+            elif request.aspect_ratio == AspectRatio.LANDSCAPE:
+                width, height = 1344, 768
+            else:
+                width, height = 1024, 1024
+            
             body = {
-                "model": "flux-1.1-pro",
-                "task_type": "txt2img",
+                "model": "flux-pro",
+                "task_type": "flux-pro",
                 "input": {
                     "prompt": request.prompt,
-                    "width": 1024 if request.aspect_ratio == AspectRatio.LANDSCAPE else 768,
-                    "height": 768 if request.aspect_ratio == AspectRatio.LANDSCAPE else 1024,
-                    "num_inference_steps": 28,
-                    "guidance_scale": 3.5,
+                    "width": width,
+                    "height": height,
+                    "steps": 25,
+                    "guidance": 3.0,
+                    "safety_tolerance": 2
                 }
             }
         elif request.model == ImageModel.MIDJOURNEY:
@@ -1122,6 +1143,79 @@ class HeyGenClient:
                 status="error",
                 message=f"상태 조회 오류: {str(e)}"
             )
+    
+    async def list_avatars(self) -> List[Dict[str, Any]]:
+        """사용 가능한 아바타 목록 조회"""
+        
+        if not self.is_available:
+            return []
+        
+        url = f"{self.BASE_URL}/v2/avatars"
+        
+        try:
+            async with httpx.AsyncClient(timeout=30.0) as client:
+                response = await client.get(url, headers=self._get_headers())
+                
+                if response.status_code == 200:
+                    data = response.json()
+                    avatars = data.get("data", {}).get("avatars", [])
+                    
+                    # 아바타 정보 정리
+                    result = []
+                    for avatar in avatars:
+                        result.append({
+                            "avatar_id": avatar.get("avatar_id"),
+                            "avatar_name": avatar.get("avatar_name"),
+                            "gender": avatar.get("gender"),
+                            "preview_image_url": avatar.get("preview_image_url"),
+                            "preview_video_url": avatar.get("preview_video_url")
+                        })
+                    
+                    print(f"✅ [HeyGen] {len(result)}개 아바타 조회됨")
+                    return result
+                else:
+                    print(f"❌ [HeyGen] 아바타 목록 조회 실패: {response.status_code}")
+                    return []
+                    
+        except Exception as e:
+            print(f"❌ [HeyGen] 아바타 목록 조회 오류: {e}")
+            return []
+    
+    async def list_voices(self) -> List[Dict[str, Any]]:
+        """사용 가능한 음성 목록 조회"""
+        
+        if not self.is_available:
+            return []
+        
+        url = f"{self.BASE_URL}/v2/voices"
+        
+        try:
+            async with httpx.AsyncClient(timeout=30.0) as client:
+                response = await client.get(url, headers=self._get_headers())
+                
+                if response.status_code == 200:
+                    data = response.json()
+                    voices = data.get("data", {}).get("voices", [])
+                    
+                    result = []
+                    for voice in voices:
+                        result.append({
+                            "voice_id": voice.get("voice_id"),
+                            "name": voice.get("name"),
+                            "language": voice.get("language"),
+                            "gender": voice.get("gender"),
+                            "preview_audio": voice.get("preview_audio")
+                        })
+                    
+                    print(f"✅ [HeyGen] {len(result)}개 음성 조회됨")
+                    return result
+                else:
+                    print(f"❌ [HeyGen] 음성 목록 조회 실패: {response.status_code}")
+                    return []
+                    
+        except Exception as e:
+            print(f"❌ [HeyGen] 음성 목록 조회 오류: {e}")
+            return []
 
 
 # ============================================
