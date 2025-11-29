@@ -1253,6 +1253,354 @@ class CreatomateClient:
                 message=f"상태 조회 오류: {str(e)}"
             )
     
+    async def concat_videos(
+        self,
+        project_id: str,
+        video_urls: List[str],
+        aspect_ratio: AspectRatio = AspectRatio.PORTRAIT,
+        transition: str = "fade",
+        transition_duration: float = 0.5
+    ) -> VideoResponse:
+        """
+        여러 비디오 연결/병합 (Concat)
+        
+        Args:
+            project_id: 프로젝트 ID
+            video_urls: 연결할 비디오 URL 목록 (순서대로 연결)
+            aspect_ratio: 출력 비율
+            transition: 전환 효과 (fade, slide, zoom, none)
+            transition_duration: 전환 시간 (초)
+        
+        Returns:
+            VideoResponse: 병합된 비디오 결과
+        """
+        
+        if not self.is_available:
+            return VideoResponse(
+                success=False,
+                status="error",
+                message="Creatomate API 키가 설정되지 않았습니다."
+            )
+        
+        if len(video_urls) < 2:
+            return VideoResponse(
+                success=False,
+                status="error",
+                message="최소 2개 이상의 비디오가 필요합니다."
+            )
+        
+        url = f"{self.BASE_URL}/renders"
+        
+        # 비디오 요소들 생성
+        video_elements = []
+        for i, video_url in enumerate(video_urls):
+            element = {
+                "type": "video",
+                "source": video_url,
+                "fit": "cover"
+            }
+            
+            # 전환 효과 추가 (두 번째 비디오부터)
+            if i > 0 and transition != "none":
+                element["enter"] = {
+                    "type": transition,
+                    "duration": transition_duration
+                }
+            
+            video_elements.append(element)
+        
+        # 화면 크기 설정
+        width = 1080 if aspect_ratio == AspectRatio.PORTRAIT else 1920
+        height = 1920 if aspect_ratio == AspectRatio.PORTRAIT else 1080
+        
+        body = {
+            "source": {
+                "output_format": "mp4",
+                "width": width,
+                "height": height,
+                "elements": video_elements
+            }
+        }
+        
+        print(f"🎬 [Creatomate] 비디오 연결 요청: {len(video_urls)}개 영상")
+        
+        try:
+            async with httpx.AsyncClient(timeout=120.0) as client:
+                response = await client.post(url, headers=self._get_headers(), json=body)
+                
+                if response.status_code in [200, 201, 202]:
+                    data = response.json()
+                    
+                    if isinstance(data, list) and len(data) > 0:
+                        render = data[0]
+                        render_id = render.get("id")
+                        video_url = render.get("url")
+                        status = render.get("status", "processing")
+                    else:
+                        render_id = data.get("id")
+                        video_url = data.get("url")
+                        status = data.get("status", "processing")
+                    
+                    mapped_status = "completed" if status in ["succeeded", "completed"] else "processing"
+                    progress = 100 if mapped_status == "completed" else 30
+                    
+                    return VideoResponse(
+                        success=True,
+                        task_id=render_id,
+                        video_url=video_url,
+                        status=mapped_status,
+                        message=f"비디오 연결 {'완료' if mapped_status == 'completed' else '진행 중'}",
+                        model="creatomate_concat",
+                        progress=progress
+                    )
+                
+                return VideoResponse(
+                    success=False,
+                    status="error",
+                    message=f"Creatomate API 오류: {response.status_code} - {response.text[:200]}"
+                )
+                
+        except Exception as e:
+            return VideoResponse(
+                success=False,
+                status="error",
+                message=f"Creatomate 연결 오류: {str(e)}"
+            )
+    
+    async def merge_videos_with_music(
+        self,
+        project_id: str,
+        video_urls: List[str],
+        music_url: str,
+        aspect_ratio: AspectRatio = AspectRatio.PORTRAIT,
+        transition: str = "fade",
+        transition_duration: float = 0.5,
+        music_volume: float = 0.5
+    ) -> VideoResponse:
+        """
+        비디오들을 연결하고 배경 음악 추가
+        
+        Args:
+            project_id: 프로젝트 ID
+            video_urls: 비디오 URL 목록
+            music_url: 배경 음악 URL
+            aspect_ratio: 출력 비율
+            transition: 전환 효과
+            transition_duration: 전환 시간
+            music_volume: 음악 볼륨 (0-1)
+        """
+        
+        if not self.is_available:
+            return VideoResponse(
+                success=False,
+                status="error",
+                message="Creatomate API 키가 설정되지 않았습니다."
+            )
+        
+        url = f"{self.BASE_URL}/renders"
+        
+        # 비디오 요소들
+        video_elements = []
+        for i, vid_url in enumerate(video_urls):
+            element = {
+                "type": "video",
+                "source": vid_url,
+                "fit": "cover",
+                "volume": 0.3  # 비디오 원본 음량 줄이기
+            }
+            
+            if i > 0 and transition != "none":
+                element["enter"] = {
+                    "type": transition,
+                    "duration": transition_duration
+                }
+            
+            video_elements.append(element)
+        
+        # 배경 음악 요소
+        music_element = {
+            "type": "audio",
+            "source": music_url,
+            "volume": music_volume,
+            "loop": True  # 비디오 길이에 맞춰 반복
+        }
+        
+        width = 1080 if aspect_ratio == AspectRatio.PORTRAIT else 1920
+        height = 1920 if aspect_ratio == AspectRatio.PORTRAIT else 1080
+        
+        body = {
+            "source": {
+                "output_format": "mp4",
+                "width": width,
+                "height": height,
+                "elements": video_elements + [music_element]
+            }
+        }
+        
+        print(f"🎬🎵 [Creatomate] 비디오+음악 병합 요청: {len(video_urls)}개 영상 + BGM")
+        
+        try:
+            async with httpx.AsyncClient(timeout=120.0) as client:
+                response = await client.post(url, headers=self._get_headers(), json=body)
+                
+                if response.status_code in [200, 201, 202]:
+                    data = response.json()
+                    
+                    if isinstance(data, list) and len(data) > 0:
+                        render_id = data[0].get("id")
+                        video_url = data[0].get("url")
+                        status = data[0].get("status", "processing")
+                    else:
+                        render_id = data.get("id")
+                        video_url = data.get("url")
+                        status = data.get("status", "processing")
+                    
+                    mapped_status = "completed" if status in ["succeeded", "completed"] else "processing"
+                    progress = 100 if mapped_status == "completed" else 30
+                    
+                    return VideoResponse(
+                        success=True,
+                        task_id=render_id,
+                        video_url=video_url,
+                        status=mapped_status,
+                        message=f"비디오+음악 병합 {'완료' if mapped_status == 'completed' else '진행 중'}",
+                        model="creatomate_merge",
+                        progress=progress
+                    )
+                
+                return VideoResponse(
+                    success=False,
+                    status="error",
+                    message=f"Creatomate API 오류: {response.status_code}"
+                )
+                
+        except Exception as e:
+            return VideoResponse(
+                success=False,
+                status="error",
+                message=f"Creatomate 연결 오류: {str(e)}"
+            )
+    
+    async def add_text_overlay(
+        self,
+        project_id: str,
+        video_url: str,
+        texts: List[Dict[str, Any]],
+        aspect_ratio: AspectRatio = AspectRatio.PORTRAIT
+    ) -> VideoResponse:
+        """
+        비디오에 텍스트 오버레이 추가
+        
+        Args:
+            project_id: 프로젝트 ID
+            video_url: 비디오 URL
+            texts: 텍스트 요소 목록 [{
+                "text": "텍스트 내용",
+                "x": "50%",      # 가로 위치 (기본: 중앙)
+                "y": "50%",      # 세로 위치
+                "font_size": 48, # 폰트 크기
+                "color": "#FFFFFF",
+                "start_time": 0,  # 시작 시간 (초)
+                "duration": None  # 지속 시간 (None = 끝까지)
+            }]
+        """
+        
+        if not self.is_available:
+            return VideoResponse(
+                success=False,
+                status="error",
+                message="Creatomate API 키가 설정되지 않았습니다."
+            )
+        
+        url = f"{self.BASE_URL}/renders"
+        
+        elements = [
+            {
+                "type": "video",
+                "source": video_url,
+                "fit": "cover"
+            }
+        ]
+        
+        # 텍스트 요소들 추가
+        for text_item in texts:
+            text_element = {
+                "type": "text",
+                "text": text_item.get("text", ""),
+                "font_family": text_item.get("font_family", "Pretendard"),
+                "font_weight": text_item.get("font_weight", "700"),
+                "font_size": f"{text_item.get('font_size', 48)} px",
+                "fill_color": text_item.get("color", "#FFFFFF"),
+                "shadow_color": "rgba(0,0,0,0.5)",
+                "x": text_item.get("x", "50%"),
+                "y": text_item.get("y", "50%"),
+                "x_anchor": "50%",
+                "y_anchor": "50%"
+            }
+            
+            if text_item.get("start_time") is not None:
+                text_element["start"] = text_item["start_time"]
+            
+            if text_item.get("duration") is not None:
+                text_element["duration"] = text_item["duration"]
+            
+            elements.append(text_element)
+        
+        width = 1080 if aspect_ratio == AspectRatio.PORTRAIT else 1920
+        height = 1920 if aspect_ratio == AspectRatio.PORTRAIT else 1080
+        
+        body = {
+            "source": {
+                "output_format": "mp4",
+                "width": width,
+                "height": height,
+                "elements": elements
+            }
+        }
+        
+        print(f"📝 [Creatomate] 텍스트 오버레이 추가: {len(texts)}개 텍스트")
+        
+        try:
+            async with httpx.AsyncClient(timeout=60.0) as client:
+                response = await client.post(url, headers=self._get_headers(), json=body)
+                
+                if response.status_code in [200, 201, 202]:
+                    data = response.json()
+                    
+                    if isinstance(data, list) and len(data) > 0:
+                        render_id = data[0].get("id")
+                        video_url = data[0].get("url")
+                        status = data[0].get("status", "processing")
+                    else:
+                        render_id = data.get("id")
+                        video_url = data.get("url")
+                        status = data.get("status", "processing")
+                    
+                    mapped_status = "completed" if status in ["succeeded", "completed"] else "processing"
+                    
+                    return VideoResponse(
+                        success=True,
+                        task_id=render_id,
+                        video_url=video_url,
+                        status=mapped_status,
+                        message=f"텍스트 오버레이 {'완료' if mapped_status == 'completed' else '진행 중'}",
+                        model="creatomate_text",
+                        progress=100 if mapped_status == "completed" else 30
+                    )
+                
+                return VideoResponse(
+                    success=False,
+                    status="error",
+                    message=f"Creatomate API 오류: {response.status_code}"
+                )
+                
+        except Exception as e:
+            return VideoResponse(
+                success=False,
+                status="error",
+                message=f"Creatomate 연결 오류: {str(e)}"
+            )
+    
     async def auto_edit(
         self,
         project_id: str,

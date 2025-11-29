@@ -1270,6 +1270,203 @@ async def poll_edit_status(project_id: str, render_id: str):
                 break
 
 
+# ============================================
+# Creatomate Video Merge/Concat API (NEW!)
+# ============================================
+
+class ConcatVideosRequest(BaseModel):
+    """비디오 연결 요청"""
+    project_id: str
+    video_urls: List[str]  # 연결할 비디오 URL 목록 (순서대로)
+    aspect_ratio: str = "9:16"
+    transition: str = "fade"  # fade, slide, zoom, none
+    transition_duration: float = 0.5
+
+
+class MergeVideosWithMusicRequest(BaseModel):
+    """비디오+음악 병합 요청"""
+    project_id: str
+    video_urls: List[str]
+    music_url: str
+    aspect_ratio: str = "9:16"
+    transition: str = "fade"
+    transition_duration: float = 0.5
+    music_volume: float = 0.5
+
+
+class TextOverlayRequest(BaseModel):
+    """텍스트 오버레이 요청"""
+    project_id: str
+    video_url: str
+    texts: List[Dict[str, Any]]  # [{text, x, y, font_size, color, start_time, duration}]
+    aspect_ratio: str = "9:16"
+
+
+@app.post("/api/creatomate/concat")
+async def concat_videos(request: ConcatVideosRequest, background_tasks: BackgroundTasks):
+    """
+    🎬 여러 비디오 연결 (Concat)
+    
+    - 2-3개 비디오를 순서대로 연결
+    - 전환 효과 지원 (fade, slide, zoom)
+    - Creatomate API 사용
+    """
+    
+    ratio_map = {
+        "16:9": AspectRatio.LANDSCAPE,
+        "9:16": AspectRatio.PORTRAIT,
+        "1:1": AspectRatio.SQUARE,
+    }
+    
+    aspect_ratio = ratio_map.get(request.aspect_ratio, AspectRatio.PORTRAIT)
+    
+    result = await factory.creatomate.concat_videos(
+        project_id=request.project_id,
+        video_urls=request.video_urls,
+        aspect_ratio=aspect_ratio,
+        transition=request.transition,
+        transition_duration=request.transition_duration
+    )
+    
+    if not result.success:
+        raise HTTPException(status_code=500, detail=f"비디오 연결 실패: {result.message}")
+    
+    # Task 저장
+    task_store[f"concat_{request.project_id}"] = {
+        "task_id": result.task_id,
+        "model": "creatomate_concat",
+        "status": result.status,
+        "progress": result.progress,
+        "video_url": result.video_url,
+        "created_at": datetime.utcnow().isoformat()
+    }
+    
+    # 백그라운드 폴링 (완료되지 않은 경우)
+    if result.status != "completed":
+        background_tasks.add_task(poll_edit_status, request.project_id, result.task_id)
+    
+    return {
+        "success": True,
+        "project_id": request.project_id,
+        "render_id": result.task_id,
+        "status": result.status,
+        "progress": result.progress,
+        "video_url": result.video_url,
+        "message": result.message,
+        "video_count": len(request.video_urls)
+    }
+
+
+@app.post("/api/creatomate/merge-with-music")
+async def merge_videos_with_music(request: MergeVideosWithMusicRequest, background_tasks: BackgroundTasks):
+    """
+    🎬🎵 비디오들을 연결하고 배경 음악 추가
+    
+    - 여러 비디오 연결 + BGM 합성
+    - 비디오 원본 볼륨 조절
+    - Creatomate API 사용
+    """
+    
+    ratio_map = {
+        "16:9": AspectRatio.LANDSCAPE,
+        "9:16": AspectRatio.PORTRAIT,
+        "1:1": AspectRatio.SQUARE,
+    }
+    
+    aspect_ratio = ratio_map.get(request.aspect_ratio, AspectRatio.PORTRAIT)
+    
+    result = await factory.creatomate.merge_videos_with_music(
+        project_id=request.project_id,
+        video_urls=request.video_urls,
+        music_url=request.music_url,
+        aspect_ratio=aspect_ratio,
+        transition=request.transition,
+        transition_duration=request.transition_duration,
+        music_volume=request.music_volume
+    )
+    
+    if not result.success:
+        raise HTTPException(status_code=500, detail=f"비디오+음악 병합 실패: {result.message}")
+    
+    # Task 저장
+    task_store[f"merge_{request.project_id}"] = {
+        "task_id": result.task_id,
+        "model": "creatomate_merge",
+        "status": result.status,
+        "progress": result.progress,
+        "video_url": result.video_url,
+        "created_at": datetime.utcnow().isoformat()
+    }
+    
+    if result.status != "completed":
+        background_tasks.add_task(poll_edit_status, request.project_id, result.task_id)
+    
+    return {
+        "success": True,
+        "project_id": request.project_id,
+        "render_id": result.task_id,
+        "status": result.status,
+        "progress": result.progress,
+        "video_url": result.video_url,
+        "message": result.message,
+        "video_count": len(request.video_urls),
+        "has_music": True
+    }
+
+
+@app.post("/api/creatomate/text-overlay")
+async def add_text_overlay(request: TextOverlayRequest, background_tasks: BackgroundTasks):
+    """
+    📝 비디오에 텍스트 오버레이 추가
+    
+    - 여러 텍스트 요소 동시 추가
+    - 위치, 크기, 색상, 시간 설정 가능
+    - Creatomate API 사용
+    """
+    
+    ratio_map = {
+        "16:9": AspectRatio.LANDSCAPE,
+        "9:16": AspectRatio.PORTRAIT,
+        "1:1": AspectRatio.SQUARE,
+    }
+    
+    aspect_ratio = ratio_map.get(request.aspect_ratio, AspectRatio.PORTRAIT)
+    
+    result = await factory.creatomate.add_text_overlay(
+        project_id=request.project_id,
+        video_url=request.video_url,
+        texts=request.texts,
+        aspect_ratio=aspect_ratio
+    )
+    
+    if not result.success:
+        raise HTTPException(status_code=500, detail=f"텍스트 오버레이 실패: {result.message}")
+    
+    # Task 저장
+    task_store[f"text_{request.project_id}"] = {
+        "task_id": result.task_id,
+        "model": "creatomate_text",
+        "status": result.status,
+        "progress": result.progress,
+        "video_url": result.video_url,
+        "created_at": datetime.utcnow().isoformat()
+    }
+    
+    if result.status != "completed":
+        background_tasks.add_task(poll_edit_status, request.project_id, result.task_id)
+    
+    return {
+        "success": True,
+        "project_id": request.project_id,
+        "render_id": result.task_id,
+        "status": result.status,
+        "progress": result.progress,
+        "video_url": result.video_url,
+        "message": result.message,
+        "text_count": len(request.texts)
+    }
+
+
 @app.get("/api/creatomate/progress/{project_id}")
 async def get_edit_progress(project_id: str):
     """편집 진행률 조회"""
