@@ -231,8 +231,6 @@ class GeminiImageClient:
         
         try:
             import google.generativeai as genai
-            from PIL import Image
-            import io
             import base64
             import uuid
             
@@ -242,20 +240,22 @@ class GeminiImageClient:
             model = genai.GenerativeModel(self.model_name)
             
             # 이미지 생성을 위한 프롬프트 구성
+            aspect_ratio_value = request.aspect_ratio.value if hasattr(request.aspect_ratio, 'value') else request.aspect_ratio
             image_prompt = f"""Generate a high-quality image based on this description:
 
 {request.prompt}
 
 Requirements:
-- Aspect ratio: {request.aspect_ratio.value if hasattr(request.aspect_ratio, 'value') else request.aspect_ratio}
+- Aspect ratio: {aspect_ratio_value}
 - High resolution, professional quality
-- Detailed and realistic"""
+- Detailed and realistic
+- Photorealistic style"""
 
             print(f"🖼️ [Gemini 2.0 Flash] 이미지 생성 요청")
             print(f"   프롬프트: {request.prompt[:80]}...")
             
-            # 이미지 생성 설정
-            generation_config = genai.GenerationConfig(
+            # 이미지 생성 설정 (Imagen 통합 사용)
+            generation_config = genai.types.GenerationConfig(
                 response_mime_type="image/png"
             )
             
@@ -269,7 +269,7 @@ Requirements:
                 for part in response.parts:
                     if hasattr(part, 'inline_data') and part.inline_data:
                         image_data = part.inline_data.data
-                        mime_type = part.inline_data.mime_type
+                        mime_type = part.inline_data.mime_type or "image/png"
                         
                         # Base64로 인코딩하여 반환
                         image_base64 = base64.b64encode(image_data).decode('utf-8')
@@ -289,11 +289,14 @@ Requirements:
                             model="gemini"
                         )
             
-            # 텍스트 응답인 경우 (이미지 생성 실패)
+            # 텍스트 응답만 받은 경우 - 이미지 생성이 지원되지 않을 수 있음
+            response_text = response.text if hasattr(response, 'text') else str(response)
+            print(f"⚠️ [Gemini] 텍스트 응답만 받음: {response_text[:200]}...")
+            
             return ImageResponse(
                 success=False,
                 status="error",
-                message="이미지 생성에 실패했습니다. 다른 프롬프트를 시도해주세요.",
+                message="Gemini 2.0 Flash에서 이미지 생성이 지원되지 않거나 제한되었습니다. Flux 모델을 시도해주세요.",
                 model="gemini"
             )
                 
