@@ -220,7 +220,7 @@ class GeminiImageClient:
         return bool(self.api_key)
     
     async def generate_image(self, request: 'ImageRequest') -> 'ImageResponse':
-        """Gemini 2.0 Flash로 이미지 생성"""
+        """Gemini Imagen 3로 이미지 생성 (비용 효율적)"""
         
         if not self.is_available:
             return ImageResponse(
@@ -230,75 +230,67 @@ class GeminiImageClient:
             )
         
         try:
-            import google.generativeai as genai
+            import httpx
             import base64
             import uuid
             
-            genai.configure(api_key=self.api_key)
+            # Imagen 3 API 직접 호출
+            url = f"https://generativelanguage.googleapis.com/v1beta/models/imagen-3.0-generate-002:predict?key={self.api_key}"
             
-            # Gemini 2.0 Flash 모델 사용 (이미지 생성 지원)
-            model = genai.GenerativeModel(self.model_name)
-            
-            # 이미지 생성을 위한 프롬프트 구성
+            # 비율에 따른 설정
             aspect_ratio_value = request.aspect_ratio.value if hasattr(request.aspect_ratio, 'value') else request.aspect_ratio
-            image_prompt = f"""Generate a high-quality image based on this description:
-
-{request.prompt}
-
-Requirements:
-- Aspect ratio: {aspect_ratio_value}
-- High resolution, professional quality
-- Detailed and realistic
-- Photorealistic style"""
-
-            print(f"🖼️ [Gemini 2.0 Flash] 이미지 생성 요청")
+            
+            body = {
+                "instances": [
+                    {"prompt": request.prompt}
+                ],
+                "parameters": {
+                    "sampleCount": 1,
+                    "aspectRatio": aspect_ratio_value,
+                    "personGeneration": "allow_adult"
+                }
+            }
+            
+            print(f"🖼️ [Gemini Imagen 3] 이미지 생성 요청")
             print(f"   프롬프트: {request.prompt[:80]}...")
             
-            # 이미지 생성 설정 (Imagen 통합 사용)
-            generation_config = genai.types.GenerationConfig(
-                response_mime_type="image/png"
-            )
-            
-            response = model.generate_content(
-                image_prompt,
-                generation_config=generation_config
-            )
-            
-            # 이미지 추출 및 저장
-            if response.parts:
-                for part in response.parts:
-                    if hasattr(part, 'inline_data') and part.inline_data:
-                        image_data = part.inline_data.data
-                        mime_type = part.inline_data.mime_type or "image/png"
+            async with httpx.AsyncClient(timeout=120.0) as client:
+                response = await client.post(url, json=body)
+                
+                if response.status_code == 200:
+                    data = response.json()
+                    predictions = data.get("predictions", [])
+                    
+                    if predictions and len(predictions) > 0:
+                        image_bytes = predictions[0].get("bytesBase64Encoded")
+                        mime_type = predictions[0].get("mimeType", "image/png")
                         
-                        # Base64로 인코딩하여 반환
-                        image_base64 = base64.b64encode(image_data).decode('utf-8')
-                        image_url = f"data:{mime_type};base64,{image_base64}"
-                        
-                        task_id = f"gemini_img_{uuid.uuid4().hex[:12]}"
-                        
-                        print(f"✅ [Gemini 2.0 Flash] 이미지 생성 완료")
-                        
-                        return ImageResponse(
-                            success=True,
-                            task_id=task_id,
-                            image_url=image_url,
-                            status="completed",
-                            progress=100,
-                            message="Gemini 2.0 Flash 이미지 생성 완료",
-                            model="gemini"
-                        )
-            
-            # 텍스트 응답만 받은 경우 - 이미지 생성이 지원되지 않을 수 있음
-            response_text = response.text if hasattr(response, 'text') else str(response)
-            print(f"⚠️ [Gemini] 텍스트 응답만 받음: {response_text[:200]}...")
-            
-            return ImageResponse(
-                success=False,
-                status="error",
-                message="Gemini 2.0 Flash에서 이미지 생성이 지원되지 않거나 제한되었습니다. Flux 모델을 시도해주세요.",
-                model="gemini"
-            )
+                        if image_bytes:
+                            image_url = f"data:{mime_type};base64,{image_bytes}"
+                            task_id = f"imagen3_{uuid.uuid4().hex[:12]}"
+                            
+                            print(f"✅ [Gemini Imagen 3] 이미지 생성 완료")
+                            
+                            return ImageResponse(
+                                success=True,
+                                task_id=task_id,
+                                image_url=image_url,
+                                status="completed",
+                                progress=100,
+                                message="Gemini Imagen 3 이미지 생성 완료",
+                                model="gemini"
+                            )
+                
+                # 오류 처리
+                error_detail = response.text[:500] if response.text else "Unknown error"
+                print(f"❌ [Gemini Imagen 3] 오류: {response.status_code} - {error_detail}")
+                
+                return ImageResponse(
+                    success=False,
+                    status="error",
+                    message=f"Gemini Imagen 3 이미지 생성 실패. Flux 모델을 시도해주세요. (HTTP {response.status_code})",
+                    model="gemini"
+                )
                 
         except Exception as e:
             print(f"❌ [Gemini Image] 오류: {str(e)}")
