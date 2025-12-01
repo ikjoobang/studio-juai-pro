@@ -853,19 +853,24 @@ async def get_video_progress(project_id: str):
 @app.post("/api/image/generate", response_model=ImageStatusResponse)
 async def generate_image(request: ImageGenerateRequest, background_tasks: BackgroundTasks):
     """
-    이미지 생성 API (Flux.1 / Midjourney / DALL-E via GoAPI)
+    이미지 생성 API
+    
+    기본값: Gemini 2.0 Flash (비용 효율적, 텍스트+이미지 통합)
+    대안: Flux.1 / Midjourney / DALL-E (via GoAPI)
     
     생성된 이미지는 타임라인의 Overlay 트랙에 사용 가능
     """
     
-    # 모델 변환
+    # 모델 변환 (gemini가 기본값)
     model_map = {
+        "gemini": ImageModel.GEMINI,  # 기본값 - 비용 효율적
         "flux": ImageModel.FLUX,
         "midjourney": ImageModel.MIDJOURNEY,
         "dalle": ImageModel.DALLE,
     }
     
-    image_model = model_map.get(request.model.lower(), ImageModel.FLUX)
+    # 기본 모델을 Gemini로 설정 (비용 효율적)
+    image_model = model_map.get(request.model.lower(), ImageModel.GEMINI)
     
     # 비율 변환
     ratio_map = {

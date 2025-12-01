@@ -44,6 +44,7 @@ class AudioModel(Enum):
 
 class ImageModel(Enum):
     """지원하는 이미지 생성 모델"""
+    GEMINI = "gemini"         # Gemini 2.0 Flash (Google AI - 비용 효율적, 기본값)
     FLUX = "flux"             # Flux.1 (via GoAPI)
     MIDJOURNEY = "midjourney" # Midjourney (via GoAPI)
     DALLE = "dalle"           # DALL-E 3 (via GoAPI)
@@ -193,6 +194,117 @@ STYLE_PRESETS = {
         "color_grade": "vibrant",
     }
 }
+
+
+# ============================================
+# Gemini 2.0 Flash Image Client (Google AI)
+# ============================================
+
+class GeminiImageClient:
+    """
+    Gemini 2.0 Flash 이미지 생성 클라이언트
+    텍스트 + 이미지 생성을 단일 모델로 처리 (비용 효율적)
+    """
+    
+    def __init__(self):
+        self.api_key = os.getenv("GOOGLE_GEMINI_API_KEY")
+        self.model_name = "gemini-2.0-flash-exp"  # 이미지 생성 지원 모델
+        
+        if self.api_key:
+            print(f"✅ [Gemini Image] API 키 설정됨: {self.api_key[:12]}...")
+        else:
+            print("❌ [Gemini Image] API 키 없음")
+    
+    @property
+    def is_available(self) -> bool:
+        return bool(self.api_key)
+    
+    async def generate_image(self, request: 'ImageRequest') -> 'ImageResponse':
+        """Gemini 2.0 Flash로 이미지 생성"""
+        
+        if not self.is_available:
+            return ImageResponse(
+                success=False,
+                status="error",
+                message="Gemini API 키가 설정되지 않았습니다."
+            )
+        
+        try:
+            import google.generativeai as genai
+            from PIL import Image
+            import io
+            import base64
+            import uuid
+            
+            genai.configure(api_key=self.api_key)
+            
+            # Gemini 2.0 Flash 모델 사용 (이미지 생성 지원)
+            model = genai.GenerativeModel(self.model_name)
+            
+            # 이미지 생성을 위한 프롬프트 구성
+            image_prompt = f"""Generate a high-quality image based on this description:
+
+{request.prompt}
+
+Requirements:
+- Aspect ratio: {request.aspect_ratio.value if hasattr(request.aspect_ratio, 'value') else request.aspect_ratio}
+- High resolution, professional quality
+- Detailed and realistic"""
+
+            print(f"🖼️ [Gemini 2.0 Flash] 이미지 생성 요청")
+            print(f"   프롬프트: {request.prompt[:80]}...")
+            
+            # 이미지 생성 설정
+            generation_config = genai.GenerationConfig(
+                response_mime_type="image/png"
+            )
+            
+            response = model.generate_content(
+                image_prompt,
+                generation_config=generation_config
+            )
+            
+            # 이미지 추출 및 저장
+            if response.parts:
+                for part in response.parts:
+                    if hasattr(part, 'inline_data') and part.inline_data:
+                        image_data = part.inline_data.data
+                        mime_type = part.inline_data.mime_type
+                        
+                        # Base64로 인코딩하여 반환
+                        image_base64 = base64.b64encode(image_data).decode('utf-8')
+                        image_url = f"data:{mime_type};base64,{image_base64}"
+                        
+                        task_id = f"gemini_img_{uuid.uuid4().hex[:12]}"
+                        
+                        print(f"✅ [Gemini 2.0 Flash] 이미지 생성 완료")
+                        
+                        return ImageResponse(
+                            success=True,
+                            task_id=task_id,
+                            image_url=image_url,
+                            status="completed",
+                            progress=100,
+                            message="Gemini 2.0 Flash 이미지 생성 완료",
+                            model="gemini"
+                        )
+            
+            # 텍스트 응답인 경우 (이미지 생성 실패)
+            return ImageResponse(
+                success=False,
+                status="error",
+                message="이미지 생성에 실패했습니다. 다른 프롬프트를 시도해주세요.",
+                model="gemini"
+            )
+                
+        except Exception as e:
+            print(f"❌ [Gemini Image] 오류: {str(e)}")
+            return ImageResponse(
+                success=False,
+                status="error",
+                message=f"Gemini 이미지 생성 오류: {str(e)}",
+                model="gemini"
+            )
 
 
 # ============================================
@@ -1828,10 +1940,12 @@ class FactoryEngine:
     1. model == 'kling' → Kling Official API (JWT) **전용** (GoAPI 폴백 없음!)
     2. model == 'veo', 'sora', 'midjourney' → GoAPI
     3. model == 'suno' → GoAPI Suno
-    4. Avatar → HeyGen
-    5. Edit → Creatomate
+    4. Image → Gemini 2.0 Flash (기본) / GoAPI (Flux, MJ, DALL-E)
+    5. Avatar → HeyGen
+    6. Edit → Creatomate
     
     ⚠️ 주의: Kling은 크레딧이 충분하므로 무조건 Official API만 사용!
+    ⚠️ 이미지: Gemini 2.0 Flash 단일 모델 사용 (비용 효율적)
     """
     
     def __init__(self):
@@ -1839,12 +1953,14 @@ class FactoryEngine:
         self.goapi = GoAPIClient()
         self.heygen = HeyGenClient()
         self.creatomate = CreatomateClient()
+        self.gemini_image = GeminiImageClient()  # Gemini 2.0 Flash 이미지 생성
         
         print("\n" + "="*60)
         print("🏭 [HYBRID FACTORY ENGINE] 초기화 완료")
         print("="*60)
         print(f"   Kling Official (JWT): {'✅ 활성' if self.kling_official.is_available else '❌ 비활성'}")
         print(f"   GoAPI (Veo/Sora/Suno/MJ): {'✅ 활성' if self.goapi.is_available else '❌ 비활성'}")
+        print(f"   Gemini 2.0 Flash (Image): {'✅ 활성' if self.gemini_image.is_available else '❌ 비활성'}")
         print(f"   HeyGen (Avatar): {'✅ 활성' if self.heygen.is_available else '❌ 비활성'}")
         print(f"   Creatomate (Edit): {'✅ 활성' if self.creatomate.is_available else '❌ 비활성'}")
         print("="*60 + "\n")
@@ -1911,13 +2027,30 @@ class FactoryEngine:
         return await self.goapi.generate_music(request, preferred_model)
     
     async def generate_image(self, request: ImageRequest) -> ImageResponse:
-        """이미지 생성 (Flux.1 / Midjourney / DALL-E via GoAPI)"""
+        """
+        이미지 생성 (Gemini 2.0 Flash 기본 / GoAPI Fallback)
         
+        라우팅:
+        - model == 'gemini' 또는 기본값 → Gemini 2.0 Flash (비용 효율적)
+        - model == 'flux', 'midjourney', 'dalle' → GoAPI
+        """
+        
+        # Gemini 2.0 Flash (기본값, 비용 효율적)
+        if request.model == ImageModel.GEMINI:
+            if self.gemini_image.is_available:
+                print(f"🎯 [ROUTING] Gemini 2.0 Flash Image (비용 효율적)")
+                return await self.gemini_image.generate_image(request)
+            else:
+                # Gemini 키 없으면 GoAPI로 Fallback
+                print(f"⚠️ [ROUTING] Gemini 키 없음 → GoAPI Fallback")
+                request.model = ImageModel.FLUX
+        
+        # GoAPI (Flux, Midjourney, DALL-E)
         if not self.goapi.is_available:
             return ImageResponse(
                 success=False,
                 status="error",
-                message="GoAPI 키가 설정되지 않았습니다."
+                message="이미지 생성 API 키가 설정되지 않았습니다."
             )
         
         print(f"🎯 [ROUTING] GoAPI Image ({request.model.value})")

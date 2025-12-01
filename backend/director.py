@@ -156,8 +156,8 @@ class AIDirector:
         
         if self.gemini_key:
             genai.configure(api_key=self.gemini_key)
-            self.model = genai.GenerativeModel('gemini-1.5-pro')
-            print("✅ [AI Director] Gemini 1.5 Pro 초기화 완료")
+            self.model = genai.GenerativeModel('gemini-2.0-flash')
+            print("✅ [AI Director] Gemini 2.0 Flash 초기화 완료")
         else:
             print("⚠️ [AI Director] Gemini API 키 없음 - 규칙 기반 모드")
     
