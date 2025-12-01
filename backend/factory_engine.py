@@ -220,77 +220,25 @@ class GeminiImageClient:
         return bool(self.api_key)
     
     async def generate_image(self, request: 'ImageRequest') -> 'ImageResponse':
-        """Gemini Imagen 3로 이미지 생성 (비용 효율적)"""
+        """
+        Gemini 기반 이미지 생성
         
-        if not self.is_available:
-            return ImageResponse(
-                success=False,
-                status="error",
-                message="Gemini API 키가 설정되지 않았습니다."
-            )
+        현재 Gemini 2.0 Flash는 이미지 생성을 직접 지원하지 않음.
+        대신 GoAPI Flux로 Fallback 처리.
         
-        try:
-            import httpx
-            import base64
-            import uuid
-            
-            # Imagen 3 API 직접 호출
-            url = f"https://generativelanguage.googleapis.com/v1beta/models/imagen-3.0-generate-002:predict?key={self.api_key}"
-            
-            # 비율에 따른 설정
-            aspect_ratio_value = request.aspect_ratio.value if hasattr(request.aspect_ratio, 'value') else request.aspect_ratio
-            
-            body = {
-                "instances": [
-                    {"prompt": request.prompt}
-                ],
-                "parameters": {
-                    "sampleCount": 1,
-                    "aspectRatio": aspect_ratio_value,
-                    "personGeneration": "allow_adult"
-                }
-            }
-            
-            print(f"🖼️ [Gemini Imagen 3] 이미지 생성 요청")
-            print(f"   프롬프트: {request.prompt[:80]}...")
-            
-            async with httpx.AsyncClient(timeout=120.0) as client:
-                response = await client.post(url, json=body)
-                
-                if response.status_code == 200:
-                    data = response.json()
-                    predictions = data.get("predictions", [])
-                    
-                    if predictions and len(predictions) > 0:
-                        image_bytes = predictions[0].get("bytesBase64Encoded")
-                        mime_type = predictions[0].get("mimeType", "image/png")
-                        
-                        if image_bytes:
-                            image_url = f"data:{mime_type};base64,{image_bytes}"
-                            task_id = f"imagen3_{uuid.uuid4().hex[:12]}"
-                            
-                            print(f"✅ [Gemini Imagen 3] 이미지 생성 완료")
-                            
-                            return ImageResponse(
-                                success=True,
-                                task_id=task_id,
-                                image_url=image_url,
-                                status="completed",
-                                progress=100,
-                                message="Gemini Imagen 3 이미지 생성 완료",
-                                model="gemini"
-                            )
-                
-                # 오류 처리
-                error_detail = response.text[:500] if response.text else "Unknown error"
-                print(f"❌ [Gemini Imagen 3] 오류: {response.status_code} - {error_detail}")
-                
-                return ImageResponse(
-                    success=False,
-                    status="error",
-                    message=f"Gemini Imagen 3 이미지 생성 실패. Flux 모델을 시도해주세요. (HTTP {response.status_code})",
-                    model="gemini"
-                )
+        향후 Google Imagen API가 일반 공개되면 직접 연동 가능.
+        """
+        
+        # Gemini API로 직접 이미지 생성은 현재 미지원
+        # GoAPI Flux로 Fallback 안내
+        print(f"⚠️ [Gemini Image] 현재 Gemini API 이미지 생성 미지원 - Flux로 Fallback 권장")
+        
+        return ImageResponse(
+            success=False,
+            status="fallback_required",
+            message="Gemini 이미지 생성은 현재 지원되지 않습니다. Flux 모델로 자동 전환됩니다.",
+            model="gemini"
+        )
                 
         except Exception as e:
             print(f"❌ [Gemini Image] 오류: {str(e)}")
@@ -2023,29 +1971,26 @@ class FactoryEngine:
     
     async def generate_image(self, request: ImageRequest) -> ImageResponse:
         """
-        이미지 생성 (Gemini 2.0 Flash 기본 / GoAPI Fallback)
+        이미지 생성 (GoAPI 기본)
         
         라우팅:
-        - model == 'gemini' 또는 기본값 → Gemini 2.0 Flash (비용 효율적)
+        - model == 'gemini' → GoAPI Flux로 자동 전환 (Gemini 이미지 생성 현재 미지원)
         - model == 'flux', 'midjourney', 'dalle' → GoAPI
+        
+        참고: Gemini 2.0 Flash는 텍스트 생성에 최적화되어 있음
         """
         
-        # Gemini 2.0 Flash (기본값, 비용 효율적)
+        # Gemini 모델 요청시 Flux로 자동 전환
         if request.model == ImageModel.GEMINI:
-            if self.gemini_image.is_available:
-                print(f"🎯 [ROUTING] Gemini 2.0 Flash Image (비용 효율적)")
-                return await self.gemini_image.generate_image(request)
-            else:
-                # Gemini 키 없으면 GoAPI로 Fallback
-                print(f"⚠️ [ROUTING] Gemini 키 없음 → GoAPI Fallback")
-                request.model = ImageModel.FLUX
+            print(f"⚠️ [ROUTING] Gemini 이미지 생성 미지원 → GoAPI Flux로 자동 전환")
+            request.model = ImageModel.FLUX
         
         # GoAPI (Flux, Midjourney, DALL-E)
         if not self.goapi.is_available:
             return ImageResponse(
                 success=False,
                 status="error",
-                message="이미지 생성 API 키가 설정되지 않았습니다."
+                message="이미지 생성 API 키가 설정되지 않았습니다. GoAPI 키를 확인해주세요."
             )
         
         print(f"🎯 [ROUTING] GoAPI Image ({request.model.value})")
